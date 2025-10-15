@@ -47,9 +47,13 @@ st.write("Note: All items in this inventory have zero sales.")
 # ==========================================================
 # ITEMS NOT FOUND IN VARIANCE
 # ==========================================================
-st.subheader("📋 Items in Inventory but Not Found in Stock Variance")
 missing_variance_items = merged[merged["Book Stock"].isna()].copy()
 missing_variance_items.fillna("Not Found in Variance", inplace=True)
+
+# Total value of missing variance items
+total_missing_value = missing_variance_items["Stock Value"].sum()
+
+st.subheader(f"📋 Items in Inventory but Not Found in Stock Variance (Total Value: {total_missing_value})")
 st.dataframe(missing_variance_items, use_container_width=True)
 
 # ==========================================================
