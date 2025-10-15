@@ -67,15 +67,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- Data Loading and Pre-processing Logic ---
-# NOTE: Mock data fallback has been REMOVED as requested.
 def load_and_preprocess_data(file_path):
-    """Loads, cleans, and transforms the data from the provided path, with no mock fallback."""
+    """Loads, cleans, and transforms the data from the provided path."""
     
     st.subheader(f"Data Source: `{file_path}`", divider='blue')
     st.info(f"Attempting to read file from path: `{file_path}`...")
     
     try:
-        # This will attempt to read the file and raise an error if it fails
         df = pd.read_excel(file_path, engine='openpyxl')
     except FileNotFoundError:
         st.error(f"File not found: **`{file_path}`**. Please ensure the file exists at this exact path.")
@@ -89,8 +87,6 @@ def load_and_preprocess_data(file_path):
     df.columns = df.columns.str.strip().str.replace(' ', '_').str.replace('[^A-Za-z0-9_%,]', '', regex=True)
     
     # --- FIX 1: Handle user's 'Margin%' column name after cleaning ---
-    # The user's 'Margin%' becomes 'Margin'. We rename it to 'Margin_Percent' 
-    # so the dashboard logic uses it (even though it's overwritten by recalculation).
     if 'Margin' in df.columns:
         df.rename(columns={'Margin': 'Margin_Percent'}, inplace=True)
         
@@ -99,13 +95,10 @@ def load_and_preprocess_data(file_path):
     monthly_cols = [col for col in df.columns if any(month in col for month in ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])]
 
     # --- FIX 2: Rename monthly columns to remove commas for successful date parsing ---
-    # This addresses user columns like 'Sep, 2025' which clean to 'Sep,_2025' 
-    # and would break the later date parsing. We force them to 'Sep_2025' format.
     rename_map = {}
     new_monthly_cols = []
     
     for col in monthly_cols:
-        # Standardize month column format: 'Sep,_2025' -> 'Sep_2025'
         new_col_name = col.replace(',_', '_').replace(',', '_').replace(' ', '_')
         if new_col_name != col:
             rename_map[col] = new_col_name
@@ -113,11 +106,11 @@ def load_and_preprocess_data(file_path):
     
     if rename_map:
         df.rename(columns=rename_map, inplace=True)
-        monthly_cols = new_monthly_cols # Use the new, clean names
+        monthly_cols = new_monthly_cols
         
     # Data Cleaning and Type Conversion
-    # The columns 'Cost', 'Selling', 'Stock', 'Pack_Qty' match after general cleaning.
-    numeric_cols = ['Cost', 'Selling', 'Stock', 'Pack_Qty']
+    # CRITICAL FIX: Removed 'Pack_Qty' as it caused a KeyError.
+    numeric_cols = ['Cost', 'Selling', 'Stock'] 
     
     for col in numeric_cols:
         if col in df.columns:
@@ -127,32 +120,34 @@ def load_and_preprocess_data(file_path):
          df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
 
-    # Recalculate/Verify Key Metrics for consistency (This will overwrite the user's input 
-    # 'Margin%', 'Stock Value', and 'Total Sales' to ensure consistency with the dashboard logic.)
+    # Recalculate/Verify Key Metrics for consistency
     df['Margin_Recalc'] = ((df['Selling'] - df['Cost']) / df['Selling']).clip(lower=0) * 100
-    df['Profit_Recalc'] = (df['Selling'] - df['Cost']) * df['Pack_Qty'].fillna(1)
+    
+    # CRITICAL FIX: Calculate Profit as Total Potential Profit from Stock (since Pack_Qty is missing)
+    # This assumes Stock represents the quantity of units currently held.
+    df['Profit_Recalc'] = (df['Selling'] - df['Cost']) * df['Stock'].fillna(0) 
+    
     df['Stock_Value_Recalc'] = df['Cost'] * df['Stock']
     df['Total_Sales_Recalc'] = df[monthly_cols].sum(axis=1)
 
     # Use the recalculated columns as primary analysis points
-    df['Margin_Percent'] = df['Margin_Recalc'] # Overwrites the original 'Margin%'
+    df['Margin_Percent'] = df['Margin_Recalc'] 
     df['Profit'] = df['Profit_Recalc']
-    df['Stock_Value'] = df['Stock_Value_Recalc'] # Overwrites the original 'Stock Value'
-    df['Total_Sales'] = df['Total_Sales_Recalc'] # Overwrites the original 'Total Sales'
+    df['Stock_Value'] = df['Stock_Value_Recalc'] 
+    df['Total_Sales'] = df['Total_Sales_Recalc'] 
 
     # --- Melt the monthly sales columns into a long format for time-series analysis ---
+    # CRITICAL FIX: Removed 'Pack_Qty' from id_vars
     df_melted = df.melt(
-        id_vars=['Item_Bar_Code', 'Item_Name', 'Category', 'Brand', 'Group', 'Cost', 'Selling', 'Margin_Percent', 'Stock', 'Pack_Qty', 'Profit', 'Stock_Value'],
+        id_vars=['Item_Bar_Code', 'Item_Name', 'Category', 'Brand', 'Group', 'Cost', 'Selling', 'Margin_Percent', 'Stock', 'Profit', 'Stock_Value'],
         value_vars=monthly_cols,
         var_name='Sales_Month',
         value_name='Monthly_Sales_Value'
     )
     
     # Clean up month names and convert to proper datetime objects for sorting
-    # Since monthly_cols are now like 'Sep_2025', this conversion works:
     df_melted['Sales_Month'] = df_melted['Sales_Month'].str.replace('_', ', ', regex=False)
     try:
-        # This is now safe because the format is consistently "Month, YYYY"
         df_melted['Date_Sort'] = pd.to_datetime(df_melted['Sales_Month'], format='%b, %Y')
     except:
         st.warning("Could not automatically parse all month columns. Sorting might be alphabetical.")
@@ -173,7 +168,7 @@ def render_key_insights(df_filtered):
     current_stock_value = df_filtered.groupby('Item_Bar_Code')['Stock_Value'].first().sum() 
     avg_margin = df_filtered.groupby('Item_Bar_Code')['Margin_Percent'].first().mean()
     
-    # Format numbers for display (CHANGED: € to AED)
+    # Format numbers for display (Using AED)
     sales_str = f"AED{total_sales:,.0f}" if total_sales > 1000 else f"AED{total_sales:,.2f}"
     profit_str = f"AED{total_profit:,.0f}" if total_profit > 1000 else f"AED{total_profit:,.2f}"
     stock_str = f"AED{current_stock_value:,.0f}" if current_stock_value > 1000 else f"AED{current_stock_value:,.2f}"
@@ -196,7 +191,7 @@ def render_key_insights(df_filtered):
     with col2:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-title">ESTIMATED PROFIT (Item-Level)</div>
+            <div class="metric-title">ESTIMATED PROFIT (Total Potential)</div>
             <div class="metric-value">{profit_str}</div>
         </div>
         """, unsafe_allow_html=True)
@@ -252,7 +247,7 @@ def main_dashboard(df_raw, df_melted):
             
             with st.expander(f"Detailed Metrics for: {item_data['Item_Name']}", expanded=True):
                 
-                # Format variables once (CHANGED: € to AED)
+                # Format variables once (Using AED)
                 stock_val_str = f"AED{item_data['Stock_Value']:,.2f}"
                 cost_str = f"AED{item_data['Cost']:,.2f}"
                 selling_str = f"AED{item_data['Selling']:,.2f}"
@@ -269,7 +264,6 @@ def main_dashboard(df_raw, df_melted):
                 colD.metric("Stock Value (Cost)", stock_val_str)
                 colE.metric("Unit Cost", cost_str)
                 colF.metric("Unit Selling Price", selling_str)
-                # Use delta for visual emphasis on Margin
                 colG.metric("Profit Margin %", margin_str, delta_color="normal")
                 
                 st.subheader("Month-wise Sales Value for this Item")
@@ -283,7 +277,6 @@ def main_dashboard(df_raw, df_melted):
                     y='Monthly_Sales_Value', 
                     title=f'Monthly Sales for {item_data["Item_Name"]}',
                     markers=True
-                # CHANGED: (€) to (AED)
                 ).update_layout(xaxis_title="Month", yaxis_title="Sales Value (AED)")
                 st.plotly_chart(fig_item_sales, use_container_width=True)
             
@@ -322,7 +315,6 @@ def main_dashboard(df_raw, df_melted):
             orientation='h',
             title="Top 10 Categories by Sales",
             color_discrete_sequence=px.colors.qualitative.Pastel
-        # CHANGED: (€) to (AED)
         ).update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_title="Total Sales Value (AED)")
         st.plotly_chart(fig_cat_sales, use_container_width=True)
 
@@ -341,7 +333,6 @@ def main_dashboard(df_raw, df_melted):
             markers=True,
             line_shape='spline',
             color_discrete_sequence=['#4F46E5']
-        # CHANGED: (€) to (AED)
         ).update_layout(xaxis_title="Month", yaxis_title="Sales Value (AED)")
         st.plotly_chart(fig_month_sales, use_container_width=True)
         
@@ -372,7 +363,6 @@ def main_dashboard(df_raw, df_melted):
     with st.expander("Best Month Summary Table", expanded=False):
         st.dataframe(
             best_month_per_category[['Category', 'Sales_Month', 'Monthly_Sales_Value']]
-            # CHANGED: (€) to (AED)
             .rename(columns={'Sales_Month': 'Peak Sales Month', 'Monthly_Sales_Value': 'Peak Sales Value (AED)'})
             .sort_values('Peak Sales Value (AED)', ascending=False),
             hide_index=True,
@@ -459,7 +449,7 @@ def margin_analysis_page(df_raw):
             x='Margin_Group',
             y='Stock_Value',
             title='Total Cost Value of Stock in Each Margin Group',
-            labels={'Stock_Value': 'Total Stock Value (AED)', 'Margin_Group': 'Margin Group'}, # CHANGED: (€) to (AED)
+            labels={'Stock_Value': 'Total Stock Value (AED)', 'Margin_Group': 'Margin Group'},
             color='Margin_Group',
             color_discrete_sequence=['#EF4444', '#F59E0B', '#FACC15', '#10B981', '#3B82F6']
         )
@@ -476,12 +466,11 @@ def margin_analysis_page(df_raw):
     
     df_display = df_filtered_margin[display_cols].rename(columns={
         'Margin_Percent': 'Margin %',
-        'Stock_Value': 'Stock Value (AED)', # CHANGED: (€) to (AED)
-        'Total_Sales': 'Total Sales (AED)' # CHANGED: (€) to (AED)
+        'Stock_Value': 'Stock Value (AED)', 
+        'Total_Sales': 'Total Sales (AED)' 
     })
 
     # Convert currency columns for clean display
-    # CHANGED: Updated columns and formatting string to AED
     currency_cols = ['Stock Value (AED)', 'Cost', 'Selling', 'Total Sales (AED)']
     for col in currency_cols:
         df_display[col] = df_display[col].apply(lambda x: f"AED{x:,.2f}")
