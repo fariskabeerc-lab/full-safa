@@ -6,7 +6,7 @@ from io import BytesIO
 # PAGE SETUP
 # ==========================================================
 st.set_page_config(page_title="📦 Inventory Zero-Sales Report", layout="wide")
-st.title("📊 Inventory Zero-Sales & Missing Variance Dashboard")
+st.title("📊 Inventory Zero-Sales & Missing Variance Data")
 
 # ==========================================================
 # LOAD EXCEL FILES DIRECTLY
