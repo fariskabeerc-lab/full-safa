@@ -1,255 +1,543 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import os 
+import plotly.express as px
+import plotly.graph_objects as go
 from io import BytesIO
+import numpy as np # Added for mock data generation
 
-# ====================================================================
-# *** ACTION REQUIRED: FILE PATHS ***
-# Define the paths for your two files.
-SALES_2024_PATH = "safa 24.Xlsx" 
-SALES_2025_PATH = "safa 25.Xlsx"
-# ====================================================================
-
-# --- Configuration (MUST BE THE FIRST STREAMLIT COMMAND) ---
-st.set_page_config(page_title="Year-over-Year Sales Comparison", layout="wide")
-st.title("🔄 Year-over-Year Item Sales Analysis (2024 vs 2025)")
-st.caption("This report identifies items that were lost, gained, and retained between the two periods, filtered by Category.")
-
-
-# --- Load and Prepare Data ---
-@st.cache_data(show_spinner="Loading and comparing item data...")
-def load_and_compare_data(path_2024, path_2025):
-    """Loads two files and performs set comparison on Item Code."""
-    
-    # 1. Load 2024 Data
-    if not os.path.exists(path_2024):
-        st.error(f"2024 Sales file not found at: {path_2024}")
-        return None, None
-    try:
-        df_2024 = pd.read_excel(path_2024, engine='openpyxl')
-        df_2024.rename(columns={'Item Code': 'Item_Code', 'Items': 'Item_Name', 'Qty Sold': 'Qty_Sold'}, inplace=True)
-    except Exception as e:
-        st.error(f"Error reading 2024 Sales file: {e}")
-        return None, None
-
-    # 2. Load 2025 Data (Contains Category)
-    if not os.path.exists(path_2025):
-        st.error(f"2025 Sales file not found at: {path_2025}")
-        return None, None
-    try:
-        df_2025 = pd.read_excel(path_2025, engine='openpyxl')
-        df_2025.rename(columns={'Item Code': 'Item_Code', 'Items': 'Item_Name', 'Category': 'Category'}, inplace=True)
-        # Note: 2025 data might not have a 'Qty Sold' column explicitly, let's look for a similar metric or assume 'Qty Sold' based on common practice. 
-        # For simplicity, we assume Qty Sold is present or can be proxied. Using 'Total Sales' as a fallback if 'Qty Sold' is missing.
-        if 'Qty Sold' in df_2025.columns:
-            df_2025.rename(columns={'Qty Sold': 'Qty_Sold'}, inplace=True)
-        else:
-            # Create a placeholder column if Qty Sold is missing in 2025
-            df_2025['Qty_Sold'] = df_2025['Total Sales'] / 10 # Placeholder quantity based on Sales
-            
-    except Exception as e:
-        st.error(f"Error reading 2025 Sales file: {e}")
-        return None, None
-
-    # --- Data Cleaning and Set Extraction ---
-    df_2024['Item_Code'] = df_2024['Item_Code'].astype(str).str.strip()
-    df_2025['Item_Code'] = df_2025['Item_Code'].astype(str).str.strip()
-    df_2024['Item_Name'].fillna('Unknown Item', inplace=True)
-    df_2025['Item_Name'].fillna('Unknown Item', inplace=True)
-    df_2025['Category'].fillna('Uncategorized', inplace=True)
-    
-    # Ensure sales and quantity columns are numeric
-    for df_temp in [df_2024, df_2025]:
-        for col in ['Total Sales', 'Qty_Sold']:
-            if col in df_temp.columns:
-                df_temp[col] = pd.to_numeric(df_temp[col], errors='coerce').fillna(0)
-
-    codes_2024 = set(df_2024['Item_Code'].unique())
-    codes_2025 = set(df_2025['Item_Code'].unique())
-
-    # --- Set Comparison Logic ---
-    lost_codes = list(codes_2024 - codes_2025)
-    new_codes = list(codes_2025 - codes_2024)
-    retained_codes = list(codes_2024.intersection(codes_2025))
-
-    # --- Category Lookup for LOST/RETAINED items (using 2025 data as source) ---
-    category_lookup = df_2025[['Item_Code', 'Category']].drop_duplicates()
-    
-    
-    # 1. LOST items (from 2024) - Get 2024 sales and 2025 category lookup
-    df_lost_base = df_2024[df_2024['Item_Code'].isin(lost_codes)].groupby(['Item_Code', 'Item_Name']).agg(
-        Total_Sales=('Total Sales', 'sum'),
-        Total_Qty=('Qty_Sold', 'sum')
-    ).reset_index()
-    df_lost = pd.merge(df_lost_base, category_lookup, on='Item_Code', how='left').fillna({'Category': 'Category Lost/Unknown'})
-
-
-    # 2. NEW items (in 2025) - Get 2025 sales and category
-    df_new_base = df_2025[df_2025['Item_Code'].isin(new_codes)].groupby(['Item_Code', 'Item_Name', 'Category']).agg(
-        Total_Sales=('Total Sales', 'sum'),
-        Total_Qty=('Qty_Sold', 'sum')
-    ).reset_index()
-    df_new = df_new_base
-
-
-    # 3. RETAINED items (in 2024/2025) - **CRITICAL MERGE/JOIN**
-    
-    # 3a. 2024 Aggregation
-    df_retained_2024 = df_2024[df_2024['Item_Code'].isin(retained_codes)].groupby(['Item_Code']).agg(
-        Item_Name=('Item_Name', 'first'),
-        Total_Sales_2024=('Total Sales', 'sum'),
-        Total_Qty_2024=('Qty_Sold', 'sum')
-    ).reset_index()
-    
-    # 3b. 2025 Aggregation
-    df_retained_2025 = df_2025[df_2025['Item_Code'].isin(retained_codes)].groupby('Item_Code').agg(
-        Total_Sales_2025=('Total Sales', 'sum'),
-        Total_Qty_2025=('Qty_Sold', 'sum'),
-        Category=('Category', 'first')
-    ).reset_index()
-
-    # 3c. Final Merge (Inner join to ensure both years are present)
-    df_retained = pd.merge(df_retained_2024, df_retained_2025, on='Item_Code', how='inner')
-    
-    # Add Item Name and Category from 2025 to the final retained table
-    df_name_cat_lookup = df_2025[['Item_Code', 'Item_Name', 'Category']].drop_duplicates(subset=['Item_Code'])
-    df_retained = pd.merge(df_retained.drop(columns=['Item_Name', 'Category']), df_name_cat_lookup, on='Item_Code', how='left').fillna({'Category': 'Category Retained/Unknown'})
-
-    # Calculate YOY Differences for Retained Items
-    df_retained['Sales_Change_AED'] = df_retained['Total_Sales_2025'] - df_retained['Total_Sales_2024']
-    df_retained['Sales_Change_%'] = np.where(
-        df_retained['Total_Sales_2024'] > 0,
-        (df_retained['Sales_Change_AED'] / df_retained['Total_Sales_2024']) * 100,
-        # Handle division by zero: if 2024 sales were 0, set to 100% or 0% based on 2025 sales
-        np.where(df_retained['Total_Sales_2025'] > 0, 100.0, 0.0)
-    )
-    
-    return df_lost, df_new, df_retained
-
-# Run the data loading and comparison
-df_lost, df_new, df_retained = load_and_compare_data(SALES_2024_PATH, SALES_2025_PATH)
-
-if df_lost is None:
-    st.stop()
-
-
-# ---------------------------
-# Sidebar Filters
-# ---------------------------
-st.sidebar.header("Filter Results")
-
-# Get all unique categories from the two relevant resulting DFs
-all_categories = pd.concat([df_new['Category'], df_retained['Category'], df_lost['Category']]).unique()
-all_categories.sort()
-
-selected_categories = st.sidebar.multiselect(
-    "Filter by Category (2025 Categories Used)",
-    options=all_categories,
-    default=all_categories
+# --- Configuration for Layout and Mobile/Laptop Responsiveness ---
+st.set_page_config(
+    page_title="Advanced Retail Sales Dashboard",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# --- Apply Filters ---
-filtered_lost = df_lost[df_lost['Category'].isin(selected_categories)]
-filtered_new = df_new[df_new['Category'].isin(selected_categories)]
-filtered_retained = df_retained[df_retained['Category'].isin(selected_categories)]
-
-
-# ---------------------------
-# Dashboard Presentation
-# ---------------------------
-st.markdown("---")
-
-total_lost = len(filtered_lost)
-total_new = len(filtered_new)
-total_retained = len(filtered_retained)
-
-# KPIs based on filtered data
-col1, col2, col3 = st.columns(3)
-
-col1.metric("Items Retained (Active in both years)", f"{total_retained:,}")
-col2.metric("Items Lost (Not Selling in 2025)", f"{total_lost:,}", delta=f"{-total_lost:,}")
-col3.metric("Items New in 2025", f"{total_new:,}", delta=f"{total_new:,}")
-
-st.markdown("---")
-
-# --- Tabbed Results ---
-tab1, tab2, tab3 = st.tabs(["🔴 Items Now Not Selling (LOST)", "🟢 Items That Had Sales Now (NEW)", "🟡 Retained (Active) Items"])
-
-# ====================================================================
-# TAB 1: LOST ITEMS
-# ====================================================================
-with tab1:
-    st.header(f"🔴 {total_lost:,} Items Lost (Sold in 2024, Not in 2025)")
-    st.warning("These items require immediate review. Sales volume dropped to zero. Filtered by 2025 Category lookup.")
+# Custom CSS for better UI and responsiveness (especially on mobile)
+# Using a clean, professional aesthetic with dark accents.
+st.markdown("""
+<style>
+    /* Main container styling for responsiveness and padding */
+    .main-content {
+        padding: 1rem 1rem 4rem 1rem; /* Adjusted padding for mobile */
+    }
     
-    if not filtered_lost.empty:
-        df_lost_sorted = filtered_lost.sort_values('Total_Sales', ascending=False)
-        st.subheader("Items ranked by their 2024 Sales Value (Impact of Loss)")
+    /* Key Metric Cards Styling */
+    .metric-card {
+        padding: 15px;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        text-align: center;
+        margin-bottom: 15px;
+        transition: transform 0.2s;
+        border-left: 5px solid #4F46E5; /* Accent color */
+        background-color: #ffffff;
+    }
+    .metric-card:hover {
+        transform: translateY(-3px);
+    }
+    .metric-title {
+        font-size: 0.9rem;
+        color: #6B7280; /* Gray color */
+        margin-bottom: 5px;
+        font-weight: 500;
+    }
+    .metric-value {
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: #1F2937; /* Dark text */
+    }
+
+    /* Streamlit-specific overrides for mobile view */
+    @media (max-width: 600px) {
+        .metric-value {
+            font-size: 1.4rem;
+        }
+        .metric-title {
+            font-size: 0.8rem;
+        }
+        /* Make filters more compact on mobile */
+        .stMultiSelect, .stSelectbox {
+            margin-bottom: 0.5rem;
+        }
+    }
+    
+    /* Adjust Streamlit wide container for better use of space */
+    .block-container {
+        padding-top: 2rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+
+# --- Mock Data Function ---
+def create_mock_data():
+    """Generates synthetic data for demonstration purposes."""
+    n_items = 50
+    np.random.seed(42)
+    
+    # Base data
+    data = {
+        'Item_Bar_Code': [f'ITEM{i:03d}' for i in range(1, n_items + 1)],
+        'Item_Name': [f'Product {i}' for i in range(1, n_items + 1)],
+        'Category': np.random.choice(['Electronics', 'Apparel', 'Home Goods', 'Perishables', 'Tools'], n_items),
+        'Brand': np.random.choice([f'Brand {chr(65+i)}' for i in range(5)], n_items),
+        'Group': np.random.choice(['G1', 'G2', 'G3'], n_items),
+    }
+    df = pd.DataFrame(data)
+    
+    # Financial data
+    df['Cost'] = np.round(np.random.uniform(5, 500, n_items), 2)
+    df['Selling'] = df['Cost'] * np.random.uniform(1.1, 2.5, n_items)
+    df['Stock'] = np.random.randint(5, 500, n_items)
+    df['Pack_Qty'] = 1
+    
+    # Monthly sales data (for Jan, Feb, Mar 2025)
+    months = ['Jan_2025', 'Feb_2025', 'Mar_2025']
+    for month in months:
+        # Sales value is proportional to selling price and a random factor
+        df[month] = np.round(df['Selling'] * np.random.randint(0, 50, n_items) * 0.8, 2)
         
-        st.dataframe(df_lost_sorted[['Item_Code', 'Item_Name', 'Category', 'Total_Qty', 'Total_Sales']].style.format({
-            'Total_Sales': 'AED {:,.2f}',
-            'Total_Qty': '{:,.0f}'
-        }).rename(columns={'Total_Qty': 'Qty Sold (2024)', 'Total_Sales': 'Sales Value (2024)'}), use_container_width=True)
+    return df
 
-    else:
-        st.success("Great news! No items were lost in the selected categories.")
-
-# ====================================================================
-# TAB 2: NEW ITEMS
-# ====================================================================
-with tab2:
-    st.header(f"🟢 {total_new:,} Items New in 2025 (Had Sales Now)")
-    st.success("These are successful launches or reactivations. Analyze their 2025 profitability.")
+# --- Data Loading and Pre-processing Logic ---
+# Removed @st.cache_data since we use mock data in this environment now.
+def load_and_preprocess_data(file_path=None):
+    """Loads, cleans, and transforms the data from the provided path or falls back to mock data."""
     
-    if not filtered_new.empty:
-        df_new_sorted = filtered_new.sort_values('Total_Sales', ascending=False)
-        st.subheader("Items ranked by their 2025 Sales Value")
-
-        st.dataframe(df_new_sorted[['Item_Code', 'Item_Name', 'Category', 'Total_Qty', 'Total_Sales']].style.format({
-            'Total_Sales': 'AED {:,.2f}',
-            'Total_Qty': '{:,.0f}'
-        }).rename(columns={'Total_Qty': 'Qty Sold (2025)', 'Total_Sales': 'Sales Value (2025)'}), use_container_width=True)
-
-    else:
-        st.info("No new items were introduced or reactivated in the selected categories.")
-
-# ====================================================================
-# TAB 3: RETAINED ITEMS
-# ====================================================================
-with tab3:
-    st.header(f"🟡 {total_retained:,} Items Retained (Active in both 2024 and 2025)")
-    st.info("These are your core items. Growth/decline analysis below.")
+    df = None
     
-    if not filtered_retained.empty:
+    # Check if a file path was provided
+    if file_path and file_path not in ["ItemSearchList.xlsx", ""]:
+        st.info(f"Attempting to read file from path: `{file_path}`...")
+        try:
+            # Note: This attempt to read a local file path will likely fail in this environment
+            df = pd.read_excel(file_path, engine='openpyxl')
+        except Exception as e:
+            st.warning(f"Failed to load file from path: {e}. Falling back to **Mock Data**.")
+            
+    # If loading failed or no meaningful path was provided, use mock data
+    if df is None:
+        st.info("Using **Mock Data** for demonstration since local file paths cannot be accessed or loaded.")
+        df = create_mock_data()
+
+    # Clean column names by stripping whitespace and converting to standard snake_case
+    df.columns = df.columns.str.strip().str.replace(' ', '_').str.replace('[^A-Za-z0-9_%,]', '', regex=True)
+    
+    # Identify sales columns (e.g., 'Sep_2025', 'Aug_2025')
+    monthly_cols = [col for col in df.columns if any(month in col for month in ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])]
+
+    # Data Cleaning and Type Conversion
+    numeric_cols = ['Cost', 'Selling', 'Stock', 'Pack_Qty', 'Profit', 'Stock_Value', 'Total_Sales', 'Margin', 'Markup']
+    
+    for col in numeric_cols:
+        # Handle cases where existing columns might have non-numeric data or NaNs
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    for col in monthly_cols:
+         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+
+    # Recalculate/Verify Key Metrics for consistency
+    df['Margin_Recalc'] = ((df['Selling'] - df['Cost']) / df['Selling']).clip(lower=0) * 100
+    df['Profit_Recalc'] = (df['Selling'] - df['Cost']) * df['Pack_Qty'].fillna(1)
+    df['Stock_Value_Recalc'] = df['Cost'] * df['Stock']
+    df['Total_Sales_Recalc'] = df[monthly_cols].sum(axis=1)
+
+    # Use the recalculated columns as primary analysis points
+    df['Margin_Percent'] = df['Margin_Recalc']
+    df['Profit'] = df['Profit_Recalc']
+    df['Stock_Value'] = df['Stock_Value_Recalc']
+    df['Total_Sales'] = df['Total_Sales_Recalc']
+
+    # --- Melt the monthly sales columns into a long format for time-series analysis ---
+    df_melted = df.melt(
+        id_vars=['Item_Bar_Code', 'Item_Name', 'Category', 'Brand', 'Group', 'Cost', 'Selling', 'Margin_Percent', 'Stock', 'Pack_Qty'],
+        value_vars=monthly_cols,
+        var_name='Sales_Month',
+        value_name='Monthly_Sales_Value'
+    )
+    
+    # Clean up month names and convert to proper datetime objects for sorting
+    df_melted['Sales_Month'] = df_melted['Sales_Month'].str.replace('_', ', ', regex=False)
+    # Attempt to parse date
+    try:
+        df_melted['Date_Sort'] = pd.to_datetime(df_melted['Sales_Month'], format='%b, %Y')
+    except:
+        st.warning("Could not automatically parse all month columns. Sorting might be alphabetical.")
+        # Fallback to simple string sort if date parsing fails
+        df_melted['Date_Sort'] = df_melted['Sales_Month'] 
+
+    return df, df_melted
+
+# --- Key Insights Rendering Function ---
+def render_key_insights(df_filtered):
+    """Calculates and displays key performance indicators at the top of the dashboard using custom cards."""
+    
+    # Calculate Metrics from the filtered data
+    total_sales = df_filtered['Monthly_Sales_Value'].sum()
+    # Profit and Stock Value are item-level, so group by unique item code first
+    total_profit = df_filtered.groupby('Item_Bar_Code')['Profit'].first().sum() 
+    current_stock_value = df_filtered.groupby('Item_Bar_Code')['Stock_Value'].first().sum() 
+    avg_margin = df_filtered.groupby('Item_Bar_Code')['Margin_Percent'].first().mean()
+    
+    # Format numbers for display
+    sales_str = f"€{total_sales:,.0f}" if total_sales > 1000 else f"€{total_sales:,.2f}"
+    profit_str = f"€{total_profit:,.0f}" if total_profit > 1000 else f"€{total_profit:,.2f}"
+    stock_str = f"€{current_stock_value:,.0f}" if current_stock_value > 1000 else f"€{current_stock_value:,.2f}"
+    margin_str = f"{avg_margin:.1f}%"
+    
+    st.subheader("Key Performance Insights", divider='rainbow')
+
+    # Use columns for responsive card layout
+    col1, col2, col3, col4 = st.columns(4)
+
+    # Use f-strings with triple quotes here is necessary to apply the custom CSS card style
+    with col1:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">TOTAL SALES VALUE (Filtered)</div>
+            <div class="metric-value">{sales_str}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">ESTIMATED PROFIT (Item-Level)</div>
+            <div class="metric-value">{profit_str}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col3:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">CURRENT STOCK VALUE (Cost)</div>
+            <div class="metric-value">{stock_str}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col4:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">AVERAGE MARGIN %</div>
+            <div class="metric-value">{margin_str}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+# --- Main Dashboard Page Function ---
+def main_dashboard(df_raw, df_melted):
+    st.title("Comprehensive Sales Performance Overview")
+    
+    # --- Sidebar Filtering and Search ---
+    st.sidebar.header("Global Filters & Search")
+
+    # 1. Item Search (Barcode or Name)
+    search_term = st.sidebar.text_input("Search Item (Barcode or Name)", "").strip()
+
+    # 2. Main Filters (Category, Brand)
+    st.sidebar.subheader("Filter Data")
+    all_categories = df_raw['Category'].unique()
+    selected_categories = st.sidebar.multiselect("Select Category(s)", all_categories, default=all_categories)
+    
+    all_brands = df_raw['Brand'].unique()
+    selected_brands = st.sidebar.multiselect("Select Brand(s)", all_brands, default=all_brands)
+
+    
+    # --- Filtering Logic ---
+    if search_term:
+        # Filter based on search term
+        search_df = df_raw[
+            (df_raw['Item_Bar_Code'].astype(str).str.contains(search_term, case=False, na=False)) |
+            (df_raw['Item_Name'].astype(str).str.contains(search_term, case=False, na=False))
+        ]
         
-        st.subheader("Retained Items with Year-over-Year Sales & Quantity Comparison")
+        # If search yields results, show Item Details
+        if not search_df.empty:
+            st.header(f"🔍 Item Details for '{search_term}'")
+            # Select the first matching item for detailed display
+            item_data = search_df.iloc[0]
+            
+            # --- CLEANUP: Use st.columns and st.metric instead of complex HTML f-string ---
+            with st.expander(f"Detailed Metrics for: {item_data['Item_Name']}", expanded=True):
+                
+                # Format variables once
+                stock_val_str = f"€{item_data['Stock_Value']:,.2f}"
+                cost_str = f"€{item_data['Cost']:,.2f}"
+                selling_str = f"€{item_data['Selling']:,.2f}"
+                margin_str = f"{item_data['Margin_Percent']:,.1f}%"
 
-        display_df = filtered_retained[[
-            'Item_Code', 'Item_Name', 'Category', 
-            'Total_Sales_2024', 'Total_Sales_2025', 
-            'Sales_Change_AED', 'Sales_Change_%',
-            'Total_Qty_2024', 'Total_Qty_2025'
-        ]].sort_values('Sales_Change_AED', ascending=False)
+                colA, colB, colC = st.columns(3)
+                colA.metric("Barcode", item_data['Item_Bar_Code'])
+                colB.metric("Category", item_data['Category'])
+                colC.metric("Current Stock", f"{item_data['Stock']:,.0f} units")
+                
+                st.markdown("---")
+                
+                colD, colE, colF, colG = st.columns(4)
+                colD.metric("Stock Value (Cost)", stock_val_str)
+                colE.metric("Unit Cost", cost_str)
+                colF.metric("Unit Selling Price", selling_str)
+                # Use delta for visual emphasis on Margin
+                colG.metric("Profit Margin %", margin_str, delta_color="normal")
+                
+                # --- End of CLEANUP ---
+                
+                st.subheader("Month-wise Sales Value for this Item")
+                # Extract monthly sales for the specific item
+                item_monthly_sales = df_melted[df_melted['Item_Bar_Code'] == item_data['Item_Bar_Code']] \
+                    .sort_values(by='Date_Sort')
 
-        st.dataframe(display_df.style.format({
-            'Total_Sales_2024': 'AED {:,.2f}',
-            'Total_Sales_2025': 'AED {:,.2f}',
-            'Sales_Change_AED': 'AED {:+,.2f}', # Plus sign for positive change
-            'Sales_Change_%': '{:+.2f}%',       # Plus sign for positive percentage
-            'Total_Qty_2024': '{:,.0f}',
-            'Total_Qty_2025': '{:,.0f}'
-        }).rename(columns={
-            'Total_Sales_2024': 'Sales Value (2024)',
-            'Total_Sales_2025': 'Sales Value (2025)',
-            'Sales_Change_AED': 'Sales Difference (AED)',
-            'Sales_Change_%': 'Sales Change (%)',
-            'Total_Qty_2024': 'Qty Sold (2024)',
-            'Total_Qty_2025': 'Qty Sold (2025)',
-        }), use_container_width=True)
+                fig_item_sales = px.line(
+                    item_monthly_sales, 
+                    x='Sales_Month', 
+                    y='Monthly_Sales_Value', 
+                    title=f'Monthly Sales for {item_data["Item_Name"]}',
+                    markers=True
+                ).update_layout(xaxis_title="Month", yaxis_title="Sales Value (€)")
+                st.plotly_chart(fig_item_sales, use_container_width=True)
+            
+            # Don't show global dashboard charts if a specific item is being searched
+            return 
+        else:
+            st.warning(f"No item found matching '{search_term}'. Showing results based on filters.")
+            
+    # Apply category and brand filters to melted data (if not searching)
+    df_filtered = df_melted[
+        (df_melted['Category'].isin(selected_categories)) &
+        (df_melted['Brand'].isin(selected_brands))
+    ]
 
-    else:
-        st.info("No items were retained in the selected categories.")
+    if df_filtered.empty:
+        st.info("No data matches the selected filters.")
+        return
 
-if __name__ == "__main__":
-    pass
+    # --- 1. Key Insights at Top ---
+    render_key_insights(df_filtered)
+
+    # --- 2. Main Visualizations ---
+    
+    col_chart_1, col_chart_2 = st.columns(2)
+
+    with col_chart_1:
+        # A. Category-wise Sales (Total over filtered period)
+        st.subheader("Total Sales Value by Category")
+        category_sales = df_filtered.groupby('Category')['Monthly_Sales_Value'].sum().reset_index()
+        category_sales = category_sales.sort_values('Monthly_Sales_Value', ascending=False)
+        
+        fig_cat_sales = px.bar(
+            category_sales.head(10), # Top 10 categories
+            x='Monthly_Sales_Value',
+            y='Category',
+            orientation='h',
+            title="Top 10 Categories by Sales",
+            color_discrete_sequence=px.colors.qualitative.Pastel
+        ).update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_title="Total Sales Value (€)")
+        st.plotly_chart(fig_cat_sales, use_container_width=True)
+
+    with col_chart_2:
+        # B. Month-wise Sales (Overall over filtered period)
+        st.subheader("Overall Monthly Sales Trend")
+        monthly_sales = df_filtered.groupby('Date_Sort').agg(
+            {'Monthly_Sales_Value': 'sum', 'Sales_Month': 'first'}
+        ).sort_values(by='Date_Sort').reset_index()
+
+        fig_month_sales = px.line(
+            monthly_sales,
+            x='Sales_Month',
+            y='Monthly_Sales_Value',
+            title="Monthly Sales Trend",
+            markers=True,
+            line_shape='spline',
+            color_discrete_sequence=['#4F46E5']
+        ).update_layout(xaxis_title="Month", yaxis_title="Sales Value (€)")
+        st.plotly_chart(fig_month_sales, use_container_width=True)
+        
+    st.markdown("---")
+    
+    # C. Which month a category did the most sales (Category vs Month analysis)
+    st.subheader("Category Sales Performance Across Months")
+    
+    # Calculate total monthly sales per category
+    category_month_sales = df_filtered.groupby(['Category', 'Sales_Month', 'Date_Sort'])['Monthly_Sales_Value'].sum().reset_index()
+    category_month_sales = category_month_sales.sort_values(by='Date_Sort')
+
+    # Find the best month for each category
+    best_month_per_category = category_month_sales.loc[category_month_sales.groupby('Category')['Monthly_Sales_Value'].idxmax()]
+    
+    # Create an interactive heatmap to show performance visually
+    fig_heatmap = px.density_heatmap(
+        category_month_sales, 
+        x='Sales_Month', 
+        y='Category', 
+        z='Monthly_Sales_Value', 
+        height=600,
+        title="Sales Heatmap: Category Performance by Month (Hover for Value)",
+        color_continuous_scale="Plasma"
+    ).update_xaxes(tickangle=45)
+    st.plotly_chart(fig_heatmap, use_container_width=True)
+
+    with st.expander("Best Month Summary Table", expanded=False):
+        st.dataframe(
+            best_month_per_category[['Category', 'Sales_Month', 'Monthly_Sales_Value']]
+            .rename(columns={'Sales_Month': 'Peak Sales Month', 'Monthly_Sales_Value': 'Peak Sales Value (€)'})
+            .sort_values('Peak Sales Value (€)', ascending=False),
+            hide_index=True,
+            use_container_width=True
+        )
+
+
+# --- Margin Analysis Page Function ---
+def margin_analysis_page(df_raw):
+    st.title("Pricing Strategy and Margin Health Check")
+    
+    # --- CLEANUP: Use st.info instead of HTML for a cleaner look and fewer quotes ---
+    st.info("""
+        This page allows you to segment your inventory based on calculated profit margin percentages. 
+        It's crucial for identifying low-margin items that might need repricing, promotion, or discontinuation, 
+        and high-margin items to capitalize on.
+    """)
+    # --- End of CLEANUP ---
+    
+    # Define margin groups
+    margin_groups = {
+        "🔴 Critical (< 5%)": (0, 5),
+        "🟠 Low (5% to 10%)": (5, 10),
+        "🟡 Medium (10% to 20%)": (10, 20),
+        "🟢 Good (20% to 30%)": (20, 30),
+        "🔵 Excellent (30%+ )": (30, 1000)
+    }
+
+    # Create the filter list in the sidebar for segmentation
+    st.sidebar.header("Margin Segmentation Filter")
+    selected_groups = st.sidebar.multiselect(
+        "Select Margin Groups to Analyze",
+        list(margin_groups.keys()),
+        default=["🔴 Critical (< 5%)", "🟡 Medium (10% to 20%)", "🔵 Excellent (30%+ )"]
+    )
+    
+    # Apply filtering logic
+    df_margin = df_raw.copy()
+    df_margin['Margin_Group'] = 'Other' # Default group
+    
+    if not selected_groups:
+        st.warning("Please select at least one Margin Group to display data.")
+        return
+
+    # Create the combined filter condition
+    filter_condition = pd.Series([False] * len(df_margin))
+    
+    for group_name in selected_groups:
+        min_val, max_val = margin_groups[group_name]
+        
+        # Apply group name and update filter condition
+        if group_name == "🔵 Excellent (30%+ )":
+            group_filter = (df_margin['Margin_Percent'] >= min_val)
+        else:
+            group_filter = (df_margin['Margin_Percent'] >= min_val) & (df_margin['Margin_Percent'] < max_val)
+
+        df_margin.loc[group_filter, 'Margin_Group'] = group_name
+        filter_condition = filter_condition | group_filter
+
+    df_filtered_margin = df_margin[filter_condition]
+
+
+    # --- Analysis & Visualization ---
+    st.subheader("Inventory Breakdown by Margin Group")
+    
+    col_chart_1, col_chart_2 = st.columns([1, 2])
+    
+    with col_chart_1:
+        # Pie chart showing count of items in each group
+        item_count = df_filtered_margin.groupby('Margin_Group').size().reset_index(name='Item_Count')
+        fig_pie = px.pie(
+            item_count, 
+            names='Margin_Group', 
+            values='Item_Count', 
+            title='Count of Items per Margin Group',
+            hole=.3,
+            color_discrete_sequence=['#EF4444', '#F59E0B', '#FACC15', '#10B981', '#3B82F6']
+        )
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+    with col_chart_2:
+        # Bar chart showing total stock value by margin group
+        stock_value_by_group = df_filtered_margin.groupby('Margin_Group')['Stock_Value'].sum().reset_index()
+        fig_bar = px.bar(
+            stock_value_by_group.sort_values('Stock_Value', ascending=False),
+            x='Margin_Group',
+            y='Stock_Value',
+            title='Total Cost Value of Stock in Each Margin Group',
+            labels={'Stock_Value': 'Total Stock Value (€)', 'Margin_Group': 'Margin Group'},
+            color='Margin_Group',
+            color_discrete_sequence=['#EF4444', '#F59E0B', '#FACC15', '#10B981', '#3B82F6']
+        )
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+    
+    st.subheader("Detailed Item List")
+    
+    # Prepare data for display
+    display_cols = [
+        'Margin_Group', 'Item_Name', 'Category', 'Brand', 'Stock', 'Stock_Value', 
+        'Cost', 'Selling', 'Margin_Percent', 'Total_Sales'
+    ]
+    
+    df_display = df_filtered_margin[display_cols].rename(columns={
+        'Margin_Percent': 'Margin %',
+        'Stock_Value': 'Stock Value (€)',
+        'Total_Sales': 'Total Sales (€)'
+    })
+
+    # Convert currency columns for clean display
+    currency_cols = ['Stock Value (€)', 'Cost', 'Selling', 'Total Sales (€)']
+    for col in currency_cols:
+        # Note: Using f-string for formatting columns in the dataframe display is clean
+        df_display[col] = df_display[col].apply(lambda x: f"€{x:,.2f}")
+        
+    df_display['Margin %'] = df_display['Margin %'].apply(lambda x: f"{x:,.1f}%")
+
+    # Display the filtered dataframe
+    st.dataframe(df_display, hide_index=True, use_container_width=True)
+    
+    st.markdown("---")
+    st.info("""
+        **Actionable Insights:**
+        * **🔴 Critical (< 5%):** Review these items immediately. Can we increase the selling price? Negotiate a better cost? Or should we phase them out?
+        * **🔵 Excellent (30%+):** These are your cash cows. Focus marketing efforts here and ensure stock levels are adequate to meet demand.
+    """)
+
+
+# --- Main Application Logic ---
+def app():
+    # File Uploader replaced with Text Input for path
+    file_path = st.sidebar.text_input(
+        "Enter Sales Excel File Path", 
+        value="/path/to/my_sales_data.xlsx",
+        help="Note: Actual file access is restricted. Mock data will be used for demonstration."
+    )
+
+    # Load and preprocess data
+    df_raw, df_melted = load_and_preprocess_data(file_path)
+    
+    if df_raw is None or df_melted is None:
+        st.error("Failed to process data. Please ensure the Excel file contains the required columns and valid data.")
+        st.stop()
+
+    # --- Page Selection in Sidebar ---
+    st.sidebar.markdown("---")
+    page = st.sidebar.radio(
+        "Select Dashboard View",
+        ["📊 Sales Overview", "📉 Margin Analysis"],
+        index=0 # Default to Sales Overview
+    )
+
+    # Dispatch to the selected page function
+    if page == "📊 Sales Overview":
+        main_dashboard(df_raw, df_melted)
+    elif page == "📉 Margin Analysis":
+        margin_analysis_page(df_raw)
+
+# Run the application
+if __name__ == '__main__':
+    app()
