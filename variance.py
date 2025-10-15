@@ -3,7 +3,6 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
-# Note: Removed the unused 'io' import (BytesIO)
 
 # --- Configuration for Layout and Mobile/Laptop Responsiveness ---
 st.set_page_config(
@@ -83,33 +82,13 @@ def load_and_preprocess_data(file_path):
         st.stop()
 
 
-    # Clean column names by stripping whitespace and converting to standard snake_case
-    df.columns = df.columns.str.strip().str.replace(' ', '_').str.replace('[^A-Za-z0-9_%,]', '', regex=True)
-    
-    # --- FIX 1: Handle user's 'Margin%' column name after cleaning ---
-    if 'Margin' in df.columns:
-        df.rename(columns={'Margin': 'Margin_Percent'}, inplace=True)
-        
+    # 1. More Robust Column Cleaning and Standardization (Handles 'Margin%' -> 'Margin_Percent')
+    df.columns = df.columns.str.strip().str.replace(' ', '_').str.replace('%', '_Percent', regex=False).str.replace('[^A-Za-z0-9_]', '', regex=True)
     
     # Identify sales columns (e.g., 'Sep_2025', 'Aug_2025')
     monthly_cols = [col for col in df.columns if any(month in col for month in ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])]
 
-    # --- FIX 2: Rename monthly columns to remove commas for successful date parsing ---
-    rename_map = {}
-    new_monthly_cols = []
-    
-    for col in monthly_cols:
-        new_col_name = col.replace(',_', '_').replace(',', '_').replace(' ', '_')
-        if new_col_name != col:
-            rename_map[col] = new_col_name
-        new_monthly_cols.append(new_col_name)
-    
-    if rename_map:
-        df.rename(columns=rename_map, inplace=True)
-        monthly_cols = new_monthly_cols
-        
-    # Data Cleaning and Type Conversion
-    # CRITICAL FIX: Removed 'Pack_Qty' as it caused a KeyError.
+    # --- Data Cleaning and Type Conversion ---
     numeric_cols = ['Cost', 'Selling', 'Stock'] 
     
     for col in numeric_cols:
@@ -120,26 +99,33 @@ def load_and_preprocess_data(file_path):
          df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
 
-    # Recalculate/Verify Key Metrics for consistency
+    # Recalculate/Verify Key Metrics
+    # Note: We use Stock for Profit calculation since Pack_Qty is missing.
     df['Margin_Recalc'] = ((df['Selling'] - df['Cost']) / df['Selling']).clip(lower=0) * 100
-    
-    # CRITICAL FIX: Calculate Profit as Total Potential Profit from Stock (since Pack_Qty is missing)
-    # This assumes Stock represents the quantity of units currently held.
     df['Profit_Recalc'] = (df['Selling'] - df['Cost']) * df['Stock'].fillna(0) 
-    
     df['Stock_Value_Recalc'] = df['Cost'] * df['Stock']
     df['Total_Sales_Recalc'] = df[monthly_cols].sum(axis=1)
 
-    # Use the recalculated columns as primary analysis points
-    df['Margin_Percent'] = df['Margin_Recalc'] 
+    # Use the recalculated columns as primary analysis points (also ensures 'Profit' column exists)
+    df['Margin_Percent'] = df.get('Margin_Percent', df['Margin_Recalc']) # Use existing Margin% if it exists, otherwise use recalc
     df['Profit'] = df['Profit_Recalc']
     df['Stock_Value'] = df['Stock_Value_Recalc'] 
     df['Total_Sales'] = df['Total_Sales_Recalc'] 
 
+    # --- Dynamic ID Vars for Melting (Fixes the KeyError) ---
+    base_id_vars = [
+        'Item_Bar_Code', 'Item_Name', 'Category', 'Cost', 'Selling', 
+        'Stock', 'Margin_Percent', 'Profit', 'Stock_Value', 'Total_Sales'
+    ]
+    
+    # Check for optional categorical columns and add them only if they exist
+    optional_id_vars = ['Brand', 'Group']
+    final_id_vars = base_id_vars + [col for col in optional_id_vars if col in df.columns]
+
+
     # --- Melt the monthly sales columns into a long format for time-series analysis ---
-    # CRITICAL FIX: Removed 'Pack_Qty' from id_vars
     df_melted = df.melt(
-        id_vars=['Item_Bar_Code', 'Item_Name', 'Category', 'Brand', 'Group', 'Cost', 'Selling', 'Margin_Percent', 'Stock', 'Profit', 'Stock_Value'],
+        id_vars=final_id_vars,
         value_vars=monthly_cols,
         var_name='Sales_Month',
         value_name='Monthly_Sales_Value'
@@ -227,18 +213,21 @@ def main_dashboard(df_raw, df_melted):
     all_categories = df_raw['Category'].unique()
     selected_categories = st.sidebar.multiselect("Select Category(s)", all_categories, default=all_categories)
     
-    all_brands = df_raw['Brand'].unique()
-    selected_brands = st.sidebar.multiselect("Select Brand(s)", all_brands, default=all_brands)
-
+    # Conditional Brand Filter
+    selected_brands = []
+    if 'Brand' in df_raw.columns:
+        all_brands = df_raw['Brand'].unique()
+        selected_brands = st.sidebar.multiselect("Select Brand(s)", all_brands, default=all_brands)
     
     # --- Filtering Logic ---
     if search_term:
-        # Filter based on search term
+        # Filter based on search term (logic remains the same)
         search_df = df_raw[
             (df_raw['Item_Bar_Code'].astype(str).str.contains(search_term, case=False, na=False)) |
             (df_raw['Item_Name'].astype(str).str.contains(search_term, case=False, na=False))
         ]
         
+        # ... (rest of the item search display logic) ...
         # If search yields results, show Item Details
         if not search_df.empty:
             st.header(f"🔍 Item Details for '{search_term}'")
@@ -257,6 +246,9 @@ def main_dashboard(df_raw, df_melted):
                 colA.metric("Barcode", item_data['Item_Bar_Code'])
                 colB.metric("Category", item_data['Category'])
                 colC.metric("Current Stock", f"{item_data['Stock']:,.0f} units")
+                
+                if 'Brand' in df_raw.columns:
+                    st.metric("Brand", item_data['Brand'])
                 
                 st.markdown("---")
                 
@@ -287,9 +279,13 @@ def main_dashboard(df_raw, df_melted):
             
     # Apply category and brand filters to melted data (if not searching)
     df_filtered = df_melted[
-        (df_melted['Category'].isin(selected_categories)) &
-        (df_melted['Brand'].isin(selected_brands))
+        (df_melted['Category'].isin(selected_categories))
     ]
+    
+    # Apply brand filter only if the column exists and selections were made
+    if 'Brand' in df_raw.columns and selected_brands:
+        df_filtered = df_filtered[df_filtered['Brand'].isin(selected_brands)]
+
 
     if df_filtered.empty:
         st.info("No data matches the selected filters.")
@@ -460,9 +456,14 @@ def margin_analysis_page(df_raw):
     
     # Prepare data for display
     display_cols = [
-        'Margin_Group', 'Item_Name', 'Category', 'Brand', 'Stock', 'Stock_Value', 
+        'Margin_Group', 'Item_Name', 'Category', 'Stock', 'Stock_Value', 
         'Cost', 'Selling', 'Margin_Percent', 'Total_Sales'
     ]
+    
+    # Conditionally add Brand if it exists in the data frame
+    if 'Brand' in df_raw.columns:
+        display_cols.insert(display_cols.index('Category') + 1, 'Brand')
+
     
     df_display = df_filtered_margin[display_cols].rename(columns={
         'Margin_Percent': 'Margin %',
@@ -493,7 +494,6 @@ def app():
     st.title("Retail Sales Dashboard")
 
     # Direct file path assignment (like in old projects)
-    # File path set to the user-specified file name
     file_path = "ItemSearchList.xlsx" 
     
     st.sidebar.info(f"File path set directly in code: **{file_path}**")
