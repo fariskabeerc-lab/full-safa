@@ -12,7 +12,7 @@ st.title("📊 Inventory & Stock Variance Comparison Dashboard")
 # LOAD EXCEL FILES DIRECTLY (EDIT PATHS HERE)
 # ==========================================================
 inventory_path = "zero sales(1).xlsx"        # Replace with your local file path
-variance_path = "SAO Stock Comparison On 15-Sep-2025 1(1)(1).Xlsx"    # Replace with your local file path
+variance_path = "sao variance.Xlsx"    # Replace with your local file path
 
 # Read both Excel files
 df_inventory = pd.read_excel(inventory_path)
