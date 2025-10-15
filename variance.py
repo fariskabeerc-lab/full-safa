@@ -113,6 +113,7 @@ def load_and_preprocess_data(file_path=None):
             # Note: This attempt to read a local file path will likely fail in this environment
             df = pd.read_excel(file_path, engine='openpyxl')
         except Exception as e:
+            # Catch file read errors and log for context
             st.warning(f"Failed to load file from path: {e}. Falling back to **Mock Data**.")
             
     # If loading failed or no meaningful path was provided, use mock data
@@ -151,8 +152,9 @@ def load_and_preprocess_data(file_path=None):
     df['Total_Sales'] = df['Total_Sales_Recalc']
 
     # --- Melt the monthly sales columns into a long format for time-series analysis ---
+    # FIX: Included 'Profit' and 'Stock_Value' to id_vars for calculations in render_key_insights
     df_melted = df.melt(
-        id_vars=['Item_Bar_Code', 'Item_Name', 'Category', 'Brand', 'Group', 'Cost', 'Selling', 'Margin_Percent', 'Stock', 'Pack_Qty'],
+        id_vars=['Item_Bar_Code', 'Item_Name', 'Category', 'Brand', 'Group', 'Cost', 'Selling', 'Margin_Percent', 'Stock', 'Pack_Qty', 'Profit', 'Stock_Value'],
         value_vars=monthly_cols,
         var_name='Sales_Month',
         value_name='Monthly_Sales_Value'
@@ -176,7 +178,9 @@ def render_key_insights(df_filtered):
     
     # Calculate Metrics from the filtered data
     total_sales = df_filtered['Monthly_Sales_Value'].sum()
-    # Profit and Stock Value are item-level, so group by unique item code first
+    
+    # Profit and Stock Value are item-level attributes (same value across all month rows for one item).
+    # Use groupby to select the unique value for each item before summing.
     total_profit = df_filtered.groupby('Item_Bar_Code')['Profit'].first().sum() 
     current_stock_value = df_filtered.groupby('Item_Bar_Code')['Stock_Value'].first().sum() 
     avg_margin = df_filtered.groupby('Item_Bar_Code')['Margin_Percent'].first().mean()
@@ -258,7 +262,6 @@ def main_dashboard(df_raw, df_melted):
             # Select the first matching item for detailed display
             item_data = search_df.iloc[0]
             
-            # --- CLEANUP: Use st.columns and st.metric instead of complex HTML f-string ---
             with st.expander(f"Detailed Metrics for: {item_data['Item_Name']}", expanded=True):
                 
                 # Format variables once
@@ -280,8 +283,6 @@ def main_dashboard(df_raw, df_melted):
                 colF.metric("Unit Selling Price", selling_str)
                 # Use delta for visual emphasis on Margin
                 colG.metric("Profit Margin %", margin_str, delta_color="normal")
-                
-                # --- End of CLEANUP ---
                 
                 st.subheader("Month-wise Sales Value for this Item")
                 # Extract monthly sales for the specific item
@@ -391,13 +392,11 @@ def main_dashboard(df_raw, df_melted):
 def margin_analysis_page(df_raw):
     st.title("Pricing Strategy and Margin Health Check")
     
-    # --- CLEANUP: Use st.info instead of HTML for a cleaner look and fewer quotes ---
     st.info("""
         This page allows you to segment your inventory based on calculated profit margin percentages. 
         It's crucial for identifying low-margin items that might need repricing, promotion, or discontinuation, 
         and high-margin items to capitalize on.
     """)
-    # --- End of CLEANUP ---
     
     # Define margin groups
     margin_groups = {
@@ -511,9 +510,10 @@ def margin_analysis_page(df_raw):
 # --- Main Application Logic ---
 def app():
     # File Uploader replaced with Text Input for path
+    # UPDATED VALUE HERE to reflect ItemSearchList.xlsx
     file_path = st.sidebar.text_input(
         "Enter Sales Excel File Path", 
-        value="/path/to/my_sales_data.xlsx",
+        value="ItemSearchList.xlsx",
         help="Note: Actual file access is restricted. Mock data will be used for demonstration."
     )
 
