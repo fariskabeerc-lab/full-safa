@@ -56,10 +56,14 @@ if selected_category != "All":
     filtered_df = filtered_df[filtered_df["Category"] == selected_category]
 
 if search_item:
-    filtered_df = filtered_df[filtered_df["Item Name"].str.lower().str.contains(search_item)]
+    filtered_df = filtered_df[
+        filtered_df["Item Name"].str.lower().str.contains(search_item, na=False)
+    ]
 
 if search_barcode:
-    filtered_df = filtered_df[filtered_df["Item Bar Code"].astype(str).str.contains(search_barcode)]
+    filtered_df = filtered_df[
+        filtered_df["Item Bar Code"].astype(str).str.contains(search_barcode, na=False)
+    ]
 
 if filtered_df.empty:
     st.warning("🚫 No items found for your filters/search.")
@@ -94,8 +98,11 @@ if page == "GP Analysis":
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    st.dataframe(selected_df[["Item Name", "Category", "Margin%", "Total Sales"]],
-                 use_container_width=True, height=500)
+    st.dataframe(
+        selected_df[["Item Name", "Category", "Margin%", "Total Sales"]],
+        use_container_width=True,
+        height=500
+    )
 
 # ======================================================
 # --- ITEM INSIGHTS PAGE ---
@@ -103,7 +110,6 @@ if page == "GP Analysis":
 elif page == "Item Insights":
     st.title("🔥 Item Wise Insights")
 
-    # Sort all filtered items by Total Sales
     sorted_df = filtered_df.sort_values("Total Sales", ascending=False)
 
     fig = px.bar(
@@ -117,8 +123,11 @@ elif page == "Item Insights":
     fig.update_layout(xaxis={'categoryorder': 'total descending'})
     st.plotly_chart(fig, use_container_width=True)
 
-    st.dataframe(sorted_df[["Item Bar Code", "Item Name", "Category", "Total Sales", "Margin%", "Stock"]],
-                 use_container_width=True, height=500)
+    st.dataframe(
+        sorted_df[["Item Bar Code", "Item Name", "Category", "Total Sales", "Margin%", "Stock"]],
+        use_container_width=True,
+        height=500
+    )
 
 # ======================================================
 # --- ZERO SALES STOCK PAGE ---
@@ -141,5 +150,8 @@ elif page == "Zero Sales Stock":
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    st.dataframe(zero_sales_df[["Item Bar Code", "Item Name", "Category", "Stock Value", "Stock"]],
-                 use_container_width=True, height=500)
+    st.dataframe(
+        zero_sales_df[["Item Bar Code", "Item Name", "Category", "Stock Value", "Stock"]],
+        use_container_width=True,
+        height=500
+    )
