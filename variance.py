@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import os # Import os for checking file existence
+import os
 
 # ======================================================
 # --- PAGE CONFIGURATION ---
@@ -17,17 +17,19 @@ def load_data(file_path):
     if not os.path.exists(file_path):
         st.error(f"File not found: {file_path}. Please ensure the Excel file is in the correct location.")
         # Create an empty DataFrame with expected columns to prevent application crash
-        expected_cols = ["Category", "Item Name", "Item Bar Code", "Total Sales", "Stock Value", "Margin%", "Stock",
-                         "Jan,Sales", "Feb,Sales", "Mar,Sales", "Apr,Sales", "May,Sales", "Jun,Sales",
-                         "Jul,Sales", "Aug,Sales", "Sep,Sales", "Oct,Sales", "Nov,Sales", "Dec,Sales"]
+        expected_cols = ["Category", "Item Name", "Item Bar Code", "Total Sales", "Stock Value", "Margin%", "Stock"]
+        # Add placeholder monthly columns for robustness
+        for m in ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]:
+            expected_cols.append(f"{m},Sales")
         return pd.DataFrame(columns=expected_cols)
-    
+
     try:
         df = pd.read_excel(file_path)
         df.columns = df.columns.str.strip()  # Clean spaces
         # Ensure key columns exist or fill with defaults
         for col in ["Category", "Item Name", "Item Bar Code", "Total Sales", "Stock Value", "Margin%", "Stock"]:
             if col not in df.columns:
+                # Use a default value appropriate for the expected data type
                 df[col] = 0 if col in ["Total Sales", "Stock Value", "Margin%", "Stock"] else ""
         return df
     except Exception as e:
@@ -42,7 +44,8 @@ file_path = "ItemSearchList.xlsx"  # ⬅️ Replace this path
 df = load_data(file_path)
 
 # Handle case where DataFrame is empty due to file error
-if df.empty:
+if df.empty or "Category" not in df.columns:
+    st.info("Please load a correct Excel file to proceed.")
     st.stop() # Stop the app if data loading failed
 
 # ======================================================
@@ -59,14 +62,6 @@ search_item = st.sidebar.text_input("Search Item Name").strip().lower()
 search_barcode = st.sidebar.text_input("Search Barcode").strip()
 
 # ======================================================
-# --- PAGE NAVIGATION ---
-# ======================================================
-page = st.sidebar.radio(
-    "📂 Select Page",
-    ["Dashboard", "GP Analysis", "Item Insights", "Zero Sales Stock"]
-)
-
-# ======================================================
 # --- FILTERING LOGIC ---
 # ======================================================
 filtered_df = df.copy()
@@ -75,18 +70,46 @@ if selected_category != "All":
     filtered_df = filtered_df[filtered_df["Category"] == selected_category]
 
 if search_item:
-    # Ensure "Item Name" is treated as string and handles potential NaNs
     filtered_df = filtered_df[filtered_df["Item Name"].astype(str).str.lower().str.contains(search_item)]
 
 if search_barcode:
-    # Ensure "Item Bar Code" is treated as string
     filtered_df = filtered_df[filtered_df["Item Bar Code"].astype(str).str.contains(search_barcode)]
 
+
 # ======================================================
-# --- DASHBOARD PAGE ---
+# --- TOP-LEVEL KPI CARDS (MOVED TO TOP) ---
+# ======================================================
+# Calculate KPIs using the filtered data
+total_sales = filtered_df["Total Sales"].sum()
+total_stock_value = filtered_df["Stock Value"].sum()
+# Calculate average margin, handle empty df
+avg_margin = filtered_df["Margin%"].mean() if not filtered_df.empty else 0
+
+# Main Title and KPIs
+st.title("📊 Retail Insights Dashboard")
+
+# Display the KPI cards right after the filtering is done
+col1, col2, col3 = st.columns(3)
+col1.metric("💰 Total Sales", f"{total_sales:,.2f}")
+col2.metric("📦 Total Stock Value", f"{total_stock_value:,.2f}")
+col3.metric("📈 Average Margin%", f"{avg_margin:.2f}%")
+
+st.markdown("---") # Add a separator line after the KPIs
+
+
+# ======================================================
+# --- PAGE NAVIGATION ---
+# ======================================================
+page = st.sidebar.radio(
+    "📂 Select Page",
+    ["Dashboard", "GP Analysis", "Item Insights", "Zero Sales Stock"]
+)
+
+# ======================================================
+# --- DASHBOARD PAGE (KPIs Removed) ---
 # ======================================================
 if page == "Dashboard":
-    st.title("📊 Sales and Stock Dashboard")
+    st.header("Sales and Stock Overview")
 
     # Detect monthly columns dynamically
     monthly_cols = [
@@ -95,7 +118,7 @@ if page == "Dashboard":
                               ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])
     ]
-    
+
     if monthly_cols:
         # Melt for monthly analysis
         sales_melted = filtered_df.melt(
@@ -107,8 +130,6 @@ if page == "Dashboard":
 
         # === Monthly Total Sales Chart ===
         monthly_sales = sales_melted.groupby("Month")["Sales"].sum().reset_index()
-        # Order months correctly for display
-        month_order = [m.split(',')[0] for m in monthly_cols] # Extract month names
         
         # Ensure 'Month' column is categorical with the correct order
         monthly_sales['Month'] = pd.Categorical(
@@ -142,29 +163,16 @@ if page == "Dashboard":
     )
     st.plotly_chart(fig2, use_container_width=True)
 
-    # === KPI CARDS ===
-    total_sales = filtered_df["Total Sales"].sum()
-    total_stock_value = filtered_df["Stock Value"].sum()
-    # Calculate weighted average margin (Total GP / Total Sales * 100)
-    # Assuming 'Total GP' is not available, we use the simple mean as in the original code, 
-    # but check for an empty filtered_df to prevent division errors.
-    avg_margin = filtered_df["Margin%"].mean() if not filtered_df.empty else 0
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("💰 Total Sales", f"{total_sales:,.2f}")
-    col2.metric("📦 Total Stock Value", f"{total_stock_value:,.2f}")
-    col3.metric("📈 Average Margin%", f"{avg_margin:.2f}%")
-
     # === Data Table ===
     st.dataframe(filtered_df, use_container_width=True, height=500)
 
 # ======================================================
-# --- GP ANALYSIS PAGE (FIXED) ---
+# --- GP ANALYSIS PAGE (FIXED to use filtered_df) ---
 # ======================================================
 elif page == "GP Analysis":
-    st.title("💹 Gross Profit Margin Analysis")
+    st.header("💹 Gross Profit Margin Analysis")
 
-    # CORRECTED: Use filtered_df to respect sidebar filters
+    # Use filtered_df to respect sidebar filters
     gp_ranges = {
         "< 5%": filtered_df[filtered_df["Margin%"] < 5],
         "5% - 10%": filtered_df[(filtered_df["Margin%"] >= 5) & (filtered_df["Margin%"] < 10)],
@@ -175,7 +183,7 @@ elif page == "GP Analysis":
 
     selected_range = st.selectbox("Select Margin Range", list(gp_ranges.keys()))
     selected_df = gp_ranges[selected_range]
-    
+
     if selected_df.empty:
         st.info(f"No items found in the '{selected_range}' margin range with the current filters.")
         st.stop()
@@ -199,8 +207,8 @@ elif page == "GP Analysis":
 # --- ITEM INSIGHTS PAGE ---
 # ======================================================
 elif page == "Item Insights":
-    st.title("🔥 Item Wise Insights")
-    
+    st.header("🔥 Item Wise Insights")
+
     if filtered_df.empty:
         st.info("No items found with the current filters.")
         st.stop()
@@ -210,7 +218,7 @@ elif page == "Item Insights":
         filtered_df.sort_values("Total Sales", ascending=False)
         .head(20)
     )
-    
+
     if top_items.empty or top_items["Total Sales"].sum() == 0:
         st.info("No sales found for the filtered items.")
     else:
@@ -230,15 +238,14 @@ elif page == "Item Insights":
                     use_container_width=True, height=500)
 
 # ======================================================
-# --- ZERO SALES STOCK PAGE (FIXED) ---
+# --- ZERO SALES STOCK PAGE (FIXED to use filtered_df) ---
 # ======================================================
 elif page == "Zero Sales Stock":
-    st.title("🚨 Zero Sales but with Stock Value")
+    st.header("🚨 Zero Sales but with Stock Value")
 
-    # CORRECTED: Use filtered_df to respect sidebar filters
-    # Find items with Total Sales == 0 AND Stock Value > 0 within the filtered set
+    # Use filtered_df to respect sidebar filters
     zero_sales_df = filtered_df[(filtered_df["Total Sales"] == 0) & (filtered_df["Stock Value"] > 0)]
-    
+
     if zero_sales_df.empty:
         st.balloons()
         st.success("🎉 Excellent! No items with stock have recorded zero sales for the filtered criteria.")
