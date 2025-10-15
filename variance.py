@@ -13,38 +13,29 @@ st.set_page_config(page_title="📊 Retail Insights Dashboard", layout="wide")
 # ======================================================
 @st.cache_data
 def load_data(file_path):
-    # Check if file exists before trying to read it
+    df = pd.read_excel(file_path)
+    df.columns = df.columns.str.strip()  # Clean spaces
+    # Ensure numeric columns
+    num_cols = ["Total Sales", "Stock Value", "Margin%", "Stock"]
+    for col in num_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    return df
+
+# ======================================================
+# --- FILE INPUT ---
+# ======================================================
+st.sidebar.header("📂 File Upload / Path")
+uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx"])
+
+if uploaded_file:
+    df = load_data(uploaded_file)
+else:
+    file_path = "ItemSearchList.xlsx"
     if not os.path.exists(file_path):
-        st.error(f"File not found: {file_path}. Please ensure the Excel file is in the correct location.")
-        # Create an empty DataFrame with expected columns to prevent application crash
-        expected_cols = ["Category", "Item Name", "Item Bar Code", "Total Sales", "Stock Value", "Margin%", "Stock"]
-        for m in ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]:
-            expected_cols.append(f"{m},Sales")
-        return pd.DataFrame(columns=expected_cols)
-
-    try:
-        df = pd.read_excel(file_path)
-        df.columns = df.columns.str.strip()  # Clean spaces
-        # Ensure key columns exist or fill with defaults
-        for col in ["Category", "Item Name", "Item Bar Code", "Total Sales", "Stock Value", "Margin%", "Stock"]:
-            if col not in df.columns:
-                df[col] = 0 if col in ["Total Sales", "Stock Value", "Margin%", "Stock"] else ""
-        return df
-    except Exception as e:
-        st.error(f"Error reading the file: {e}")
-        return pd.DataFrame()
-
-
-# ======================================================
-# --- FILE PATH (Change to your Excel file path) ---
-# ======================================================
-file_path = "ItemSearchList.xlsx"  # ⬅️ Replace this path
-df = load_data(file_path)
-
-# Handle case where DataFrame is empty due to file error
-if df.empty or "Category" not in df.columns:
-    st.info("Please load a correct Excel file to proceed.")
-    st.stop() 
+        st.error("❌ File not found. Please upload or check the path.")
+        st.stop()
+    df = load_data(file_path)
 
 # ======================================================
 # --- SIDEBAR FILTERS ---
@@ -59,6 +50,12 @@ selected_category = st.sidebar.selectbox("Select Category", categories)
 search_item = st.sidebar.text_input("Search Item Name").strip().lower()
 search_barcode = st.sidebar.text_input("Search Barcode").strip()
 
+# Page navigation
+page = st.sidebar.radio(
+    "📂 Select Page",
+    ["Dashboard", "GP Analysis", "Item Insights", "Zero Sales Stock"]
+)
+
 # ======================================================
 # --- FILTERING LOGIC ---
 # ======================================================
@@ -68,45 +65,20 @@ if selected_category != "All":
     filtered_df = filtered_df[filtered_df["Category"] == selected_category]
 
 if search_item:
-    filtered_df = filtered_df[filtered_df["Item Name"].astype(str).str.lower().str.contains(search_item)]
+    filtered_df = filtered_df[filtered_df["Item Name"].str.lower().str.contains(search_item)]
 
 if search_barcode:
     filtered_df = filtered_df[filtered_df["Item Bar Code"].astype(str).str.contains(search_barcode)]
 
+if filtered_df.empty:
+    st.warning("🚫 No items found for your filters/search.")
+    st.stop()
 
 # ======================================================
-# --- TOP-LEVEL KPI CARDS (NO DOLLAR SIGN) ---
-# ======================================================
-# Calculate KPIs using the filtered data
-total_sales = filtered_df["Total Sales"].sum()
-total_stock_value = filtered_df["Stock Value"].sum()
-avg_margin = filtered_df["Margin%"].mean() if not filtered_df.empty else 0
-
-# Main Title and KPIs
-st.title("📊 Retail Insights Dashboard")
-
-# Display the KPI cards
-col1, col2, col3 = st.columns(3)
-col1.metric("💰 Total Sales", f"{total_sales:,.2f}") # Removed $
-col2.metric("📦 Total Stock Value", f"{total_stock_value:,.2f}") # Removed $
-col3.metric("📈 Average Margin%", f"{avg_margin:.2f}%")
-
-st.markdown("---") # Separator line
-
-
-# ======================================================
-# --- PAGE NAVIGATION ---
-# ======================================================
-page = st.sidebar.radio(
-    "📂 Select Page",
-    ["Dashboard", "GP Analysis", "Item Insights", "Zero Sales Stock"]
-)
-
-# ======================================================
-# --- DASHBOARD PAGE (Line Chart & KPIs Removed) ---
+# --- DASHBOARD PAGE ---
 # ======================================================
 if page == "Dashboard":
-    st.header("Sales and Stock Overview")
+    st.title("📊 Sales and Stock Dashboard")
 
     # Detect monthly columns dynamically
     monthly_cols = [
@@ -116,47 +88,37 @@ if page == "Dashboard":
                                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])
     ]
 
-    if monthly_cols:
-        # Melt for monthly analysis
-        sales_melted = filtered_df.melt(
-            id_vars=["Item Name", "Category"],
-            value_vars=monthly_cols,
-            var_name="Month",
-            value_name="Sales"
-        )
+    # Melt for monthly analysis
+    sales_melted = filtered_df.melt(
+        id_vars=["Item Name", "Category"],
+        value_vars=monthly_cols,
+        var_name="Month",
+        value_name="Sales"
+    )
 
-        # === Monthly Total Sales Chart (LINE CHART - NO DOLLAR SIGN) ===
-        monthly_sales = sales_melted.groupby("Month")["Sales"].sum().reset_index()
+    # Fix month order
+    month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    sales_melted["Month"] = pd.Categorical(
+        sales_melted["Month"],
+        categories=[m for m in month_order if any(m in x for x in sales_melted["Month"])],
+        ordered=True
+    )
+    sales_melted = sales_melted.sort_values("Month")
 
-        # Ensure 'Month' column is categorical with the correct order
-        monthly_sales['Month'] = pd.Categorical(
-            monthly_sales['Month'], 
-            categories=monthly_cols, 
-            ordered=True
-        )
-        monthly_sales = monthly_sales.sort_values('Month')
+    # === Monthly Total Sales Chart ===
+    monthly_sales = sales_melted.groupby("Month")["Sales"].sum().reset_index()
+    fig1 = px.bar(
+        monthly_sales,
+        x="Month",
+        y="Sales",
+        title="📈 Monthly Total Sales",
+        text_auto=".2s",
+        color="Sales"
+    )
+    st.plotly_chart(fig1, use_container_width=True)
 
-        # Use px.line for a modern trend view
-        fig1 = px.line(
-            monthly_sales,
-            x="Month",
-            y="Sales",
-            title="📈 **Monthly Sales Trend**", 
-            markers=True,  
-            line_shape='spline', # Smooth the line
-            color_discrete_sequence=px.colors.qualitative.D3, 
-        )
-        
-        # Remove $ from hovertemplate and tickformat
-        fig1.update_traces(hovertemplate='Month: %{x}<br>Sales: %{y:,.2f}<extra></extra>') 
-        fig1.update_yaxes(title_text="Total Sales", tickformat=',.0f') # Removed $
-        fig1.update_layout(hovermode="x unified", title_x=0.5)
-
-        st.plotly_chart(fig1, use_container_width=True)
-    else:
-        st.info("No monthly sales columns detected (e.g., 'Jan,Sales'). Monthly chart is skipped.")
-
-    # === Total Sales by Category (Bar Chart) ===
+    # === Total Sales by Category ===
     cat_sales = filtered_df.groupby("Category")["Total Sales"].sum().reset_index()
     fig2 = px.bar(
         cat_sales,
@@ -164,39 +126,42 @@ if page == "Dashboard":
         y="Total Sales",
         title="🏷️ Total Sales by Category",
         text_auto=".2s",
-        color="Category",
-        template="streamlit"
+        color="Category"
     )
     st.plotly_chart(fig2, use_container_width=True)
+
+    # === KPI CARDS ===
+    total_sales = filtered_df["Total Sales"].sum()
+    total_stock_value = filtered_df["Stock Value"].sum()
+    avg_margin = filtered_df["Margin%"].mean()
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("💰 Total Sales", f"{total_sales:,.0f}")
+    col2.metric("📦 Total Stock Value", f"{total_stock_value:,.0f}")
+    col3.metric("📈 Average Margin%", f"{avg_margin:.2f}%")
 
     # === Data Table ===
     st.dataframe(filtered_df, use_container_width=True, height=500)
 
 # ======================================================
-# --- GP ANALYSIS PAGE (NO DOLLAR SIGN) ---
+# --- GP ANALYSIS PAGE ---
 # ======================================================
 elif page == "GP Analysis":
-    st.header("💹 Gross Profit Margin Analysis")
+    st.title("💹 Gross Profit Margin Analysis")
 
-    # Use filtered_df to respect sidebar filters
     gp_ranges = {
-        "< 5%": filtered_df[filtered_df["Margin%"] < 5],
-        "5% - 10%": filtered_df[(filtered_df["Margin%"] >= 5) & (filtered_df["Margin%"] < 10)],
-        "10% - 20%": filtered_df[(filtered_df["Margin%"] >= 10) & (filtered_df["Margin%"] < 20)],
-        "20% - 30%": filtered_df[(filtered_df["Margin%"] >= 20) & (filtered_df["Margin%"] < 30)],
-        "> 30%": filtered_df[filtered_df["Margin%"] >= 30]
+        "< 5%": df[df["Margin%"] < 5],
+        "5% - 10%": df[(df["Margin%"] >= 5) & (df["Margin%"] < 10)],
+        "10% - 20%": df[(df["Margin%"] >= 10) & (df["Margin%"] < 20)],
+        "20% - 30%": df[(df["Margin%"] >= 20) & (df["Margin%"] < 30)],
+        "> 30%": df[df["Margin%"] >= 30]
     }
 
     selected_range = st.selectbox("Select Margin Range", list(gp_ranges.keys()))
     selected_df = gp_ranges[selected_range]
 
-    if selected_df.empty:
-        st.info(f"No items found in the '{selected_range}' margin range with the current filters.")
-        st.stop()
-
-    col_gp1, col_gp2 = st.columns(2)
-    col_gp1.metric("🧾 Items in Range", len(selected_df))
-    col_gp2.metric("💰 Total Sales in Range", f"{selected_df['Total Sales'].sum():,.2f}") # Removed $
+    st.metric("🧾 Items in Range", len(selected_df))
+    st.metric("💰 Total Sales in Range", f"{selected_df['Total Sales'].sum():,.0f}")
 
     fig3 = px.histogram(
         selected_df,
@@ -213,53 +178,35 @@ elif page == "GP Analysis":
 # --- ITEM INSIGHTS PAGE ---
 # ======================================================
 elif page == "Item Insights":
-    st.header("🔥 Item Wise Insights")
-
-    if filtered_df.empty:
-        st.info("No items found with the current filters.")
-        st.stop()
+    st.title("🔥 Item Wise Insights")
 
     # Top items by sales
-    top_items = (
-        filtered_df.sort_values("Total Sales", ascending=False)
-        .head(20)
+    top_items = filtered_df.sort_values("Total Sales", ascending=False).head(20)
+
+    fig4 = px.bar(
+        top_items,
+        x="Item Name",
+        y="Total Sales",
+        color="Category",
+        title="🏆 Top 20 Items by Sales",
+        text_auto=".2s"
     )
+    fig4.update_layout(xaxis={'categoryorder': 'total descending'})
+    st.plotly_chart(fig4, use_container_width=True)
 
-    if top_items.empty or top_items["Total Sales"].sum() == 0:
-        st.info("No sales found for the filtered items.")
-    else:
-        fig4 = px.bar(
-            top_items,
-            x="Item Name",
-            y="Total Sales",
-            color="Category",
-            title="🏆 Top 20 Items by Sales",
-            text_auto=".2s"
-        )
-        fig4.update_layout(xaxis={'categoryorder': 'total descending'})
-        st.plotly_chart(fig4, use_container_width=True)
-
-        # Show data
-        st.dataframe(top_items[["Item Bar Code", "Item Name", "Category", "Total Sales", "Margin%", "Stock"]],
-                    use_container_width=True, height=500)
+    st.dataframe(top_items[["Item Bar Code", "Item Name", "Category", "Total Sales", "Margin%", "Stock"]],
+                 use_container_width=True, height=500)
 
 # ======================================================
-# --- ZERO SALES STOCK PAGE (NO DOLLAR SIGN) ---
+# --- ZERO SALES STOCK PAGE ---
 # ======================================================
 elif page == "Zero Sales Stock":
-    st.header("🚨 Zero Sales but with Stock Value")
+    st.title("🚨 Zero Sales but with Stock Value")
 
-    # Use filtered_df to respect sidebar filters
-    zero_sales_df = filtered_df[(filtered_df["Total Sales"] == 0) & (filtered_df["Stock Value"] > 0)]
+    zero_sales_df = df[(df["Total Sales"] == 0) & (df["Stock Value"] > 0)]
 
-    if zero_sales_df.empty:
-        st.balloons()
-        st.success("🎉 Excellent! No items with stock have recorded zero sales for the filtered criteria.")
-        st.stop()
-
-    col_zs1, col_zs2 = st.columns(2)
-    col_zs1.metric("📦 Total Items in Zero Sales", len(zero_sales_df))
-    col_zs2.metric("💰 Total Stock Value", f"{zero_sales_df['Stock Value'].sum():,.2f}") # Removed $
+    st.metric("📦 Total Items in Zero Sales", len(zero_sales_df))
+    st.metric("💰 Total Stock Value", f"{zero_sales_df['Stock Value'].sum():,.0f}")
 
     fig5 = px.bar(
         zero_sales_df.head(20),
