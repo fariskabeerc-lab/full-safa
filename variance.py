@@ -72,7 +72,7 @@ if filtered_df.empty:
 # --- DASHBOARD PAGE ---
 # ======================================================
 if page == "Dashboard":
-    st.title("📊 Sales and Stock Dashboard")
+    st.title("📊 Sales and Stock Dashboard (prev 6 months)")
 
     # Detect monthly columns dynamically
     monthly_cols = [
