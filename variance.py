@@ -129,4 +129,17 @@ elif page == "Zero Sales Stock":
     zero_sales_df = filtered_df[(filtered_df["Total Sales"] == 0) & (filtered_df["Stock Value"] > 0)]
 
     st.metric("📦 Total Items in Zero Sales", len(zero_sales_df))
-    st.metric("💰 Total Stock Value", f"{zero_sales_df
+    st.metric("💰 Total Stock Value", f"{zero_sales_df['Stock Value'].sum():,.0f}")
+
+    fig = px.bar(
+        zero_sales_df.head(20),
+        x="Item Name",
+        y="Stock Value",
+        color="Category",
+        title="Top 20 Items with Stock Value but Zero Sales",
+        text_auto=".2s"
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.dataframe(zero_sales_df[["Item Bar Code", "Item Name", "Category", "Stock Value", "Stock"]],
+                 use_container_width=True, height=500)
