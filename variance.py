@@ -66,20 +66,22 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- Data Loading and Pre-processing Logic ---
+@st.cache_data
 def load_and_preprocess_data(file_path):
     """Loads, cleans, and transforms the data from the provided path."""
     
-    st.subheader(f"Data Source: `{file_path}`", divider='blue')
-    st.info(f"Attempting to read file from path: `{file_path}`...")
+    # st.subheader(f"Data Source: `{file_path}`", divider='blue') # Removed for cleaner UI
+    # st.info(f"Attempting to read file from path: `{file_path}`...") # Removed for cleaner UI
     
-    try:
-        df = pd.read_excel(file_path, engine='openpyxl')
-    except FileNotFoundError:
-        st.error(f"File not found: **`{file_path}`**. Please ensure the file exists at this exact path.")
-        st.stop()
-    except Exception as e:
-        st.error(f"An error occurred while reading the Excel file: {e}")
-        st.stop()
+    with st.spinner(f"Loading and preprocessing data from **`{file_path}`**..."):
+        try:
+            df = pd.read_excel(file_path, engine='openpyxl')
+        except FileNotFoundError:
+            st.error(f"File not found: **`{file_path}`**. Please ensure the file exists at this exact path.")
+            st.stop()
+        except Exception as e:
+            st.error(f"An error occurred while reading the Excel file: {e}")
+            st.stop()
 
 
     # 1. More Robust Column Cleaning and Standardization (Handles 'Margin%' -> 'Margin_Percent')
