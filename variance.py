@@ -75,7 +75,7 @@ if search_barcode:
 
 
 # ======================================================
-# --- TOP-LEVEL KPI CARDS (MOVED TO TOP) ---
+# --- TOP-LEVEL KPI CARDS (NO DOLLAR SIGN) ---
 # ======================================================
 # Calculate KPIs using the filtered data
 total_sales = filtered_df["Total Sales"].sum()
@@ -87,8 +87,8 @@ st.title("📊 Retail Insights Dashboard")
 
 # Display the KPI cards
 col1, col2, col3 = st.columns(3)
-col1.metric("💰 Total Sales", f"{total_sales:,.2f}")
-col2.metric("📦 Total Stock Value", f"{total_stock_value:,.2f}")
+col1.metric("💰 Total Sales", f"{total_sales:,.2f}") # Removed $
+col2.metric("📦 Total Stock Value", f"{total_stock_value:,.2f}") # Removed $
 col3.metric("📈 Average Margin%", f"{avg_margin:.2f}%")
 
 st.markdown("---") # Separator line
@@ -125,7 +125,7 @@ if page == "Dashboard":
             value_name="Sales"
         )
 
-        # === Monthly Total Sales Chart (LINE CHART) ===
+        # === Monthly Total Sales Chart (LINE CHART - NO DOLLAR SIGN) ===
         monthly_sales = sales_melted.groupby("Month")["Sales"].sum().reset_index()
 
         # Ensure 'Month' column is categorical with the correct order
@@ -147,9 +147,9 @@ if page == "Dashboard":
             color_discrete_sequence=px.colors.qualitative.D3, 
         )
         
-        # Add tooltips and formatting
-        fig1.update_traces(hovertemplate='Month: %{x}<br>Sales: %{y:$,.2f}<extra></extra>')
-        fig1.update_yaxes(title_text="Total Sales", tickformat='$,.0f')
+        # Remove $ from hovertemplate and tickformat
+        fig1.update_traces(hovertemplate='Month: %{x}<br>Sales: %{y:,.2f}<extra></extra>') 
+        fig1.update_yaxes(title_text="Total Sales", tickformat=',.0f') # Removed $
         fig1.update_layout(hovermode="x unified", title_x=0.5)
 
         st.plotly_chart(fig1, use_container_width=True)
@@ -173,7 +173,7 @@ if page == "Dashboard":
     st.dataframe(filtered_df, use_container_width=True, height=500)
 
 # ======================================================
-# --- GP ANALYSIS PAGE (FIXED to use filtered_df) ---
+# --- GP ANALYSIS PAGE (NO DOLLAR SIGN) ---
 # ======================================================
 elif page == "GP Analysis":
     st.header("💹 Gross Profit Margin Analysis")
@@ -196,7 +196,7 @@ elif page == "GP Analysis":
 
     col_gp1, col_gp2 = st.columns(2)
     col_gp1.metric("🧾 Items in Range", len(selected_df))
-    col_gp2.metric("💰 Total Sales in Range", f"{selected_df['Total Sales'].sum():,.2f}")
+    col_gp2.metric("💰 Total Sales in Range", f"{selected_df['Total Sales'].sum():,.2f}") # Removed $
 
     fig3 = px.histogram(
         selected_df,
@@ -244,7 +244,7 @@ elif page == "Item Insights":
                     use_container_width=True, height=500)
 
 # ======================================================
-# --- ZERO SALES STOCK PAGE (FIXED to use filtered_df) ---
+# --- ZERO SALES STOCK PAGE (NO DOLLAR SIGN) ---
 # ======================================================
 elif page == "Zero Sales Stock":
     st.header("🚨 Zero Sales but with Stock Value")
@@ -259,7 +259,7 @@ elif page == "Zero Sales Stock":
 
     col_zs1, col_zs2 = st.columns(2)
     col_zs1.metric("📦 Total Items in Zero Sales", len(zero_sales_df))
-    col_zs2.metric("💰 Total Stock Value", f"{zero_sales_df['Stock Value'].sum():,.2f}")
+    col_zs2.metric("💰 Total Stock Value", f"{zero_sales_df['Stock Value'].sum():,.2f}") # Removed $
 
     fig5 = px.bar(
         zero_sales_df.head(20),
