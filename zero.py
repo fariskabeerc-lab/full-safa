@@ -13,7 +13,7 @@ st.title("📊 Inventory Zero-Sales & Missing Variance Dashboard")
 # ==========================================================
 inventory_path = "zero sales(1).xlsx"        # Inventory file
 variance_path = "sao variance.Xlsx"         # Stock variance file
-purchase_path = "purchase.xlsx"             # Purchase file
+purchase_path = "Purchase sep15-till.Xlsx"             # Purchase file
 
 # Read Excel files
 df_inventory = pd.read_excel(inventory_path)
