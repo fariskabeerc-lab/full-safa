@@ -49,23 +49,29 @@ st.write(f"**Total inventory value (Zero Sales Items):** {total_inventory_value}
 st.write("Note: All items in this inventory have zero sales.")
 
 # ==========================================================
-# ITEMS NOT FOUND IN VARIANCE
+# TABLE 1: ALL ITEMS IN INVENTORY BUT NOT IN VARIANCE
 # ==========================================================
-missing_variance_items = merged[merged["Book Stock"].isna()].copy()
+st.subheader("📋 Items in Inventory but Not Found in Stock Variance (Original)")
+missing_variance_items_all = merged[merged["Book Stock"].isna()].copy()
+missing_variance_items_all.fillna("Not Found in Variance", inplace=True)
 
-# Remove items that are in purchase
-missing_variance_items = missing_variance_items[
-    ~missing_variance_items["Item Bar Code"].isin(df_purchase["Item Bar Code"])
+# Total value
+total_missing_value_all = missing_variance_items_all["Stock Value"].sum()
+st.write(f"**Total Stock Value of Missing Variance Items:** {total_missing_value_all}")
+st.dataframe(missing_variance_items_all, use_container_width=True)
+
+# ==========================================================
+# TABLE 2: FILTERED ITEMS (REMOVE PURCHASE ITEMS)
+# ==========================================================
+st.subheader("📋 Missing Variance Items After Removing Purchased Items")
+missing_variance_items_filtered = missing_variance_items_all[
+    ~missing_variance_items_all["Item Bar Code"].isin(df_purchase["Item Bar Code"])
 ].copy()
 
-# Fill remaining missing values
-missing_variance_items.fillna("Not Found in Variance", inplace=True)
-
-# Total value of missing variance items
-total_missing_value = missing_variance_items["Stock Value"].sum()
-
-st.subheader(f"📋 Items in Inventory but Not Found in Stock Variance (Total Value: {total_missing_value})")
-st.dataframe(missing_variance_items, use_container_width=True)
+# Total value
+total_missing_value_filtered = missing_variance_items_filtered["Stock Value"].sum()
+st.write(f"**Total Stock Value After Removing Purchased Items:** {total_missing_value_filtered}")
+st.dataframe(missing_variance_items_filtered, use_container_width=True)
 
 # ==========================================================
 # DOWNLOAD MERGED RESULT
