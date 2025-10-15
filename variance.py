@@ -9,12 +9,12 @@ import os
 st.set_page_config(page_title="📊 Retail Insights Dashboard", layout="wide")
 
 # ======================================================
-# --- LOAD DATA (CACHED for SPEED) ---
+# --- LOAD DATA ---
 # ======================================================
 @st.cache_data
 def load_data(file_path):
     df = pd.read_excel(file_path)
-    df.columns = df.columns.str.strip()  # Clean spaces
+    df.columns = df.columns.str.strip()
     # Ensure numeric columns
     num_cols = ["Total Sales", "Stock Value", "Margin%", "Stock"]
     for col in num_cols:
@@ -36,15 +36,12 @@ df = load_data(file_path)
 # ======================================================
 st.sidebar.header("🔍 Filters")
 
-# Category filter
 categories = ["All"] + sorted(df["Category"].dropna().unique().tolist())
 selected_category = st.sidebar.selectbox("Select Category", categories)
 
-# Search inputs
 search_item = st.sidebar.text_input("Search Item Name").strip().lower()
 search_barcode = st.sidebar.text_input("Search Barcode").strip()
 
-# Page navigation
 page = st.sidebar.radio(
     "📂 Select Page",
     ["GP Analysis", "Item Insights", "Zero Sales Stock"]
@@ -92,7 +89,8 @@ if page == "GP Analysis":
         selected_df,
         x="Margin%",
         nbins=20,
-        title=f"Distribution of GP% ({selected_range})"
+        title=f"Distribution of GP% ({selected_range})",
+        text_auto=True
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -105,11 +103,11 @@ if page == "GP Analysis":
 elif page == "Item Insights":
     st.title("🔥 Item Wise Insights")
 
-    # Top items by sales
-    top_items = filtered_df.sort_values("Total Sales", ascending=False).head(20)
+    # Sort all filtered items by Total Sales
+    sorted_df = filtered_df.sort_values("Total Sales", ascending=False)
 
     fig = px.bar(
-        top_items,
+        sorted_df.head(20),
         x="Item Name",
         y="Total Sales",
         color="Category",
@@ -119,7 +117,7 @@ elif page == "Item Insights":
     fig.update_layout(xaxis={'categoryorder': 'total descending'})
     st.plotly_chart(fig, use_container_width=True)
 
-    st.dataframe(top_items[["Item Bar Code", "Item Name", "Category", "Total Sales", "Margin%", "Stock"]],
+    st.dataframe(sorted_df[["Item Bar Code", "Item Name", "Category", "Total Sales", "Margin%", "Stock"]],
                  use_container_width=True, height=500)
 
 # ======================================================
@@ -131,17 +129,4 @@ elif page == "Zero Sales Stock":
     zero_sales_df = filtered_df[(filtered_df["Total Sales"] == 0) & (filtered_df["Stock Value"] > 0)]
 
     st.metric("📦 Total Items in Zero Sales", len(zero_sales_df))
-    st.metric("💰 Total Stock Value", f"{zero_sales_df['Stock Value'].sum():,.0f}")
-
-    fig = px.bar(
-        zero_sales_df.head(20),
-        x="Item Name",
-        y="Stock Value",
-        color="Category",
-        title="Top 20 Items with Stock Value but Zero Sales",
-        text_auto=".2s"
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.dataframe(zero_sales_df[["Item Bar Code", "Item Name", "Category", "Stock Value", "Stock"]],
-                 use_container_width=True, height=500)
+    st.metric("💰 Total Stock Value", f"{zero_sales_df
