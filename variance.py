@@ -23,19 +23,13 @@ def load_data(file_path):
     return df
 
 # ======================================================
-# --- FILE INPUT ---
+# --- FILE PATH ---
 # ======================================================
-st.sidebar.header("📂 File Upload / Path")
-uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx"])
-
-if uploaded_file:
-    df = load_data(uploaded_file)
-else:
-    file_path = "ItemSearchList.xlsx"
-    if not os.path.exists(file_path):
-        st.error("❌ File not found. Please upload or check the path.")
-        st.stop()
-    df = load_data(file_path)
+file_path = "ItemSearchList.xlsx"
+if not os.path.exists(file_path):
+    st.error("❌ File not found. Please check the path.")
+    st.stop()
+df = load_data(file_path)
 
 # ======================================================
 # --- SIDEBAR FILTERS ---
