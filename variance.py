@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from io import BytesIO
-import numpy as np # Added for mock data generation
+import numpy as np
+# Note: Removed the unused 'io' import (BytesIO)
 
 # --- Configuration for Layout and Mobile/Laptop Responsiveness ---
 st.set_page_config(
@@ -13,12 +13,11 @@ st.set_page_config(
 )
 
 # Custom CSS for better UI and responsiveness (especially on mobile)
-# Using a clean, professional aesthetic with dark accents.
 st.markdown("""
 <style>
     /* Main container styling for responsiveness and padding */
     .main-content {
-        padding: 1rem 1rem 4rem 1rem; /* Adjusted padding for mobile */
+        padding: 1rem 1rem 4rem 1rem;
     }
     
     /* Key Metric Cards Styling */
@@ -37,14 +36,14 @@ st.markdown("""
     }
     .metric-title {
         font-size: 0.9rem;
-        color: #6B7280; /* Gray color */
+        color: #6B7280;
         margin-bottom: 5px;
         font-weight: 500;
     }
     .metric-value {
         font-size: 1.8rem;
         font-weight: 700;
-        color: #1F2937; /* Dark text */
+        color: #1F2937;
     }
 
     /* Streamlit-specific overrides for mobile view */
@@ -55,7 +54,6 @@ st.markdown("""
         .metric-title {
             font-size: 0.8rem;
         }
-        /* Make filters more compact on mobile */
         .stMultiSelect, .stSelectbox {
             margin-bottom: 0.5rem;
         }
@@ -68,70 +66,60 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
-# --- Mock Data Function ---
-def create_mock_data():
-    """Generates synthetic data for demonstration purposes."""
-    n_items = 50
-    np.random.seed(42)
-    
-    # Base data
-    data = {
-        'Item_Bar_Code': [f'ITEM{i:03d}' for i in range(1, n_items + 1)],
-        'Item_Name': [f'Product {i}' for i in range(1, n_items + 1)],
-        'Category': np.random.choice(['Electronics', 'Apparel', 'Home Goods', 'Perishables', 'Tools'], n_items),
-        'Brand': np.random.choice([f'Brand {chr(65+i)}' for i in range(5)], n_items),
-        'Group': np.random.choice(['G1', 'G2', 'G3'], n_items),
-    }
-    df = pd.DataFrame(data)
-    
-    # Financial data
-    df['Cost'] = np.round(np.random.uniform(5, 500, n_items), 2)
-    df['Selling'] = df['Cost'] * np.random.uniform(1.1, 2.5, n_items)
-    df['Stock'] = np.random.randint(5, 500, n_items)
-    df['Pack_Qty'] = 1
-    
-    # Monthly sales data (for Jan, Feb, Mar 2025)
-    months = ['Jan_2025', 'Feb_2025', 'Mar_2025']
-    for month in months:
-        # Sales value is proportional to selling price and a random factor
-        df[month] = np.round(df['Selling'] * np.random.randint(0, 50, n_items) * 0.8, 2)
-        
-    return df
-
 # --- Data Loading and Pre-processing Logic ---
-# Removed @st.cache_data since we use mock data in this environment now.
-def load_and_preprocess_data(file_path=None):
-    """Loads, cleans, and transforms the data from the provided path or falls back to mock data."""
+# NOTE: Mock data fallback has been REMOVED as requested.
+def load_and_preprocess_data(file_path):
+    """Loads, cleans, and transforms the data from the provided path, with no mock fallback."""
     
-    df = None
+    st.subheader(f"Data Source: `{file_path}`", divider='blue')
+    st.info(f"Attempting to read file from path: `{file_path}`...")
     
-    # Check if a file path was provided
-    if file_path and file_path not in ["ItemSearchList.xlsx", ""]:
-        st.info(f"Attempting to read file from path: `{file_path}`...")
-        try:
-            # Note: This attempt to read a local file path will likely fail in this environment
-            df = pd.read_excel(file_path, engine='openpyxl')
-        except Exception as e:
-            # Catch file read errors and log for context
-            st.warning(f"Failed to load file from path: {e}. Falling back to **Mock Data**.")
-            
-    # If loading failed or no meaningful path was provided, use mock data
-    if df is None:
-        st.info("Using **Mock Data** for demonstration since local file paths cannot be accessed or loaded.")
-        df = create_mock_data()
+    try:
+        # This will attempt to read the file and raise an error if it fails
+        df = pd.read_excel(file_path, engine='openpyxl')
+    except FileNotFoundError:
+        st.error(f"File not found: **`{file_path}`**. Please ensure the file exists at this exact path.")
+        st.stop()
+    except Exception as e:
+        st.error(f"An error occurred while reading the Excel file: {e}")
+        st.stop()
+
 
     # Clean column names by stripping whitespace and converting to standard snake_case
     df.columns = df.columns.str.strip().str.replace(' ', '_').str.replace('[^A-Za-z0-9_%,]', '', regex=True)
     
+    # --- FIX 1: Handle user's 'Margin%' column name after cleaning ---
+    # The user's 'Margin%' becomes 'Margin'. We rename it to 'Margin_Percent' 
+    # so the dashboard logic uses it (even though it's overwritten by recalculation).
+    if 'Margin' in df.columns:
+        df.rename(columns={'Margin': 'Margin_Percent'}, inplace=True)
+        
+    
     # Identify sales columns (e.g., 'Sep_2025', 'Aug_2025')
     monthly_cols = [col for col in df.columns if any(month in col for month in ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])]
 
+    # --- FIX 2: Rename monthly columns to remove commas for successful date parsing ---
+    # This addresses user columns like 'Sep, 2025' which clean to 'Sep,_2025' 
+    # and would break the later date parsing. We force them to 'Sep_2025' format.
+    rename_map = {}
+    new_monthly_cols = []
+    
+    for col in monthly_cols:
+        # Standardize month column format: 'Sep,_2025' -> 'Sep_2025'
+        new_col_name = col.replace(',_', '_').replace(',', '_').replace(' ', '_')
+        if new_col_name != col:
+            rename_map[col] = new_col_name
+        new_monthly_cols.append(new_col_name)
+    
+    if rename_map:
+        df.rename(columns=rename_map, inplace=True)
+        monthly_cols = new_monthly_cols # Use the new, clean names
+        
     # Data Cleaning and Type Conversion
-    numeric_cols = ['Cost', 'Selling', 'Stock', 'Pack_Qty', 'Profit', 'Stock_Value', 'Total_Sales', 'Margin', 'Markup']
+    # The columns 'Cost', 'Selling', 'Stock', 'Pack_Qty' match after general cleaning.
+    numeric_cols = ['Cost', 'Selling', 'Stock', 'Pack_Qty']
     
     for col in numeric_cols:
-        # Handle cases where existing columns might have non-numeric data or NaNs
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
     
@@ -139,20 +127,20 @@ def load_and_preprocess_data(file_path=None):
          df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
 
-    # Recalculate/Verify Key Metrics for consistency
+    # Recalculate/Verify Key Metrics for consistency (This will overwrite the user's input 
+    # 'Margin%', 'Stock Value', and 'Total Sales' to ensure consistency with the dashboard logic.)
     df['Margin_Recalc'] = ((df['Selling'] - df['Cost']) / df['Selling']).clip(lower=0) * 100
     df['Profit_Recalc'] = (df['Selling'] - df['Cost']) * df['Pack_Qty'].fillna(1)
     df['Stock_Value_Recalc'] = df['Cost'] * df['Stock']
     df['Total_Sales_Recalc'] = df[monthly_cols].sum(axis=1)
 
     # Use the recalculated columns as primary analysis points
-    df['Margin_Percent'] = df['Margin_Recalc']
+    df['Margin_Percent'] = df['Margin_Recalc'] # Overwrites the original 'Margin%'
     df['Profit'] = df['Profit_Recalc']
-    df['Stock_Value'] = df['Stock_Value_Recalc']
-    df['Total_Sales'] = df['Total_Sales_Recalc']
+    df['Stock_Value'] = df['Stock_Value_Recalc'] # Overwrites the original 'Stock Value'
+    df['Total_Sales'] = df['Total_Sales_Recalc'] # Overwrites the original 'Total Sales'
 
     # --- Melt the monthly sales columns into a long format for time-series analysis ---
-    # FIX: Included 'Profit' and 'Stock_Value' to id_vars for calculations in render_key_insights
     df_melted = df.melt(
         id_vars=['Item_Bar_Code', 'Item_Name', 'Category', 'Brand', 'Group', 'Cost', 'Selling', 'Margin_Percent', 'Stock', 'Pack_Qty', 'Profit', 'Stock_Value'],
         value_vars=monthly_cols,
@@ -161,13 +149,13 @@ def load_and_preprocess_data(file_path=None):
     )
     
     # Clean up month names and convert to proper datetime objects for sorting
+    # Since monthly_cols are now like 'Sep_2025', this conversion works:
     df_melted['Sales_Month'] = df_melted['Sales_Month'].str.replace('_', ', ', regex=False)
-    # Attempt to parse date
     try:
+        # This is now safe because the format is consistently "Month, YYYY"
         df_melted['Date_Sort'] = pd.to_datetime(df_melted['Sales_Month'], format='%b, %Y')
     except:
         st.warning("Could not automatically parse all month columns. Sorting might be alphabetical.")
-        # Fallback to simple string sort if date parsing fails
         df_melted['Date_Sort'] = df_melted['Sales_Month'] 
 
     return df, df_melted
@@ -185,10 +173,10 @@ def render_key_insights(df_filtered):
     current_stock_value = df_filtered.groupby('Item_Bar_Code')['Stock_Value'].first().sum() 
     avg_margin = df_filtered.groupby('Item_Bar_Code')['Margin_Percent'].first().mean()
     
-    # Format numbers for display
-    sales_str = f"€{total_sales:,.0f}" if total_sales > 1000 else f"€{total_sales:,.2f}"
-    profit_str = f"€{total_profit:,.0f}" if total_profit > 1000 else f"€{total_profit:,.2f}"
-    stock_str = f"€{current_stock_value:,.0f}" if current_stock_value > 1000 else f"€{current_stock_value:,.2f}"
+    # Format numbers for display (CHANGED: € to AED)
+    sales_str = f"AED{total_sales:,.0f}" if total_sales > 1000 else f"AED{total_sales:,.2f}"
+    profit_str = f"AED{total_profit:,.0f}" if total_profit > 1000 else f"AED{total_profit:,.2f}"
+    stock_str = f"AED{current_stock_value:,.0f}" if current_stock_value > 1000 else f"AED{current_stock_value:,.2f}"
     margin_str = f"{avg_margin:.1f}%"
     
     st.subheader("Key Performance Insights", divider='rainbow')
@@ -264,10 +252,10 @@ def main_dashboard(df_raw, df_melted):
             
             with st.expander(f"Detailed Metrics for: {item_data['Item_Name']}", expanded=True):
                 
-                # Format variables once
-                stock_val_str = f"€{item_data['Stock_Value']:,.2f}"
-                cost_str = f"€{item_data['Cost']:,.2f}"
-                selling_str = f"€{item_data['Selling']:,.2f}"
+                # Format variables once (CHANGED: € to AED)
+                stock_val_str = f"AED{item_data['Stock_Value']:,.2f}"
+                cost_str = f"AED{item_data['Cost']:,.2f}"
+                selling_str = f"AED{item_data['Selling']:,.2f}"
                 margin_str = f"{item_data['Margin_Percent']:,.1f}%"
 
                 colA, colB, colC = st.columns(3)
@@ -295,7 +283,8 @@ def main_dashboard(df_raw, df_melted):
                     y='Monthly_Sales_Value', 
                     title=f'Monthly Sales for {item_data["Item_Name"]}',
                     markers=True
-                ).update_layout(xaxis_title="Month", yaxis_title="Sales Value (€)")
+                # CHANGED: (€) to (AED)
+                ).update_layout(xaxis_title="Month", yaxis_title="Sales Value (AED)")
                 st.plotly_chart(fig_item_sales, use_container_width=True)
             
             # Don't show global dashboard charts if a specific item is being searched
@@ -333,7 +322,8 @@ def main_dashboard(df_raw, df_melted):
             orientation='h',
             title="Top 10 Categories by Sales",
             color_discrete_sequence=px.colors.qualitative.Pastel
-        ).update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_title="Total Sales Value (€)")
+        # CHANGED: (€) to (AED)
+        ).update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_title="Total Sales Value (AED)")
         st.plotly_chart(fig_cat_sales, use_container_width=True)
 
     with col_chart_2:
@@ -351,7 +341,8 @@ def main_dashboard(df_raw, df_melted):
             markers=True,
             line_shape='spline',
             color_discrete_sequence=['#4F46E5']
-        ).update_layout(xaxis_title="Month", yaxis_title="Sales Value (€)")
+        # CHANGED: (€) to (AED)
+        ).update_layout(xaxis_title="Month", yaxis_title="Sales Value (AED)")
         st.plotly_chart(fig_month_sales, use_container_width=True)
         
     st.markdown("---")
@@ -381,8 +372,9 @@ def main_dashboard(df_raw, df_melted):
     with st.expander("Best Month Summary Table", expanded=False):
         st.dataframe(
             best_month_per_category[['Category', 'Sales_Month', 'Monthly_Sales_Value']]
-            .rename(columns={'Sales_Month': 'Peak Sales Month', 'Monthly_Sales_Value': 'Peak Sales Value (€)'})
-            .sort_values('Peak Sales Value (€)', ascending=False),
+            # CHANGED: (€) to (AED)
+            .rename(columns={'Sales_Month': 'Peak Sales Month', 'Monthly_Sales_Value': 'Peak Sales Value (AED)'})
+            .sort_values('Peak Sales Value (AED)', ascending=False),
             hide_index=True,
             use_container_width=True
         )
@@ -467,7 +459,7 @@ def margin_analysis_page(df_raw):
             x='Margin_Group',
             y='Stock_Value',
             title='Total Cost Value of Stock in Each Margin Group',
-            labels={'Stock_Value': 'Total Stock Value (€)', 'Margin_Group': 'Margin Group'},
+            labels={'Stock_Value': 'Total Stock Value (AED)', 'Margin_Group': 'Margin Group'}, # CHANGED: (€) to (AED)
             color='Margin_Group',
             color_discrete_sequence=['#EF4444', '#F59E0B', '#FACC15', '#10B981', '#3B82F6']
         )
@@ -484,15 +476,15 @@ def margin_analysis_page(df_raw):
     
     df_display = df_filtered_margin[display_cols].rename(columns={
         'Margin_Percent': 'Margin %',
-        'Stock_Value': 'Stock Value (€)',
-        'Total_Sales': 'Total Sales (€)'
+        'Stock_Value': 'Stock Value (AED)', # CHANGED: (€) to (AED)
+        'Total_Sales': 'Total Sales (AED)' # CHANGED: (€) to (AED)
     })
 
     # Convert currency columns for clean display
-    currency_cols = ['Stock Value (€)', 'Cost', 'Selling', 'Total Sales (€)']
+    # CHANGED: Updated columns and formatting string to AED
+    currency_cols = ['Stock Value (AED)', 'Cost', 'Selling', 'Total Sales (AED)']
     for col in currency_cols:
-        # Note: Using f-string for formatting columns in the dataframe display is clean
-        df_display[col] = df_display[col].apply(lambda x: f"€{x:,.2f}")
+        df_display[col] = df_display[col].apply(lambda x: f"AED{x:,.2f}")
         
     df_display['Margin %'] = df_display['Margin %'].apply(lambda x: f"{x:,.1f}%")
 
@@ -509,21 +501,19 @@ def margin_analysis_page(df_raw):
 
 # --- Main Application Logic ---
 def app():
-    # File Uploader replaced with Text Input for path
-    # UPDATED VALUE HERE to reflect ItemSearchList.xlsx
-    file_path = st.sidebar.text_input(
-        "Enter Sales Excel File Path", 
-        value="ItemSearchList.xlsx",
-        help="Note: Actual file access is restricted. Mock data will be used for demonstration."
-    )
+    st.title("Retail Sales Dashboard")
 
-    # Load and preprocess data
+    # Direct file path assignment (like in old projects)
+    # File path set to the user-specified file name
+    file_path = "ItemSearchList.xlsx" 
+    
+    st.sidebar.info(f"File path set directly in code: **{file_path}**")
+
+    # Load and preprocess data. The function now handles errors/stopping if file is missing.
     df_raw, df_melted = load_and_preprocess_data(file_path)
     
-    if df_raw is None or df_melted is None:
-        st.error("Failed to process data. Please ensure the Excel file contains the required columns and valid data.")
-        st.stop()
-
+    # If the function didn't stop, the data frames are ready
+    
     # --- Page Selection in Sidebar ---
     st.sidebar.markdown("---")
     page = st.sidebar.radio(
