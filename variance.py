@@ -18,7 +18,6 @@ def load_data(file_path):
         st.error(f"File not found: {file_path}. Please ensure the Excel file is in the correct location.")
         # Create an empty DataFrame with expected columns to prevent application crash
         expected_cols = ["Category", "Item Name", "Item Bar Code", "Total Sales", "Stock Value", "Margin%", "Stock"]
-        # Add placeholder monthly columns for robustness
         for m in ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]:
             expected_cols.append(f"{m},Sales")
         return pd.DataFrame(columns=expected_cols)
@@ -29,7 +28,6 @@ def load_data(file_path):
         # Ensure key columns exist or fill with defaults
         for col in ["Category", "Item Name", "Item Bar Code", "Total Sales", "Stock Value", "Margin%", "Stock"]:
             if col not in df.columns:
-                # Use a default value appropriate for the expected data type
                 df[col] = 0 if col in ["Total Sales", "Stock Value", "Margin%", "Stock"] else ""
         return df
     except Exception as e:
@@ -46,7 +44,7 @@ df = load_data(file_path)
 # Handle case where DataFrame is empty due to file error
 if df.empty or "Category" not in df.columns:
     st.info("Please load a correct Excel file to proceed.")
-    st.stop() # Stop the app if data loading failed
+    st.stop() 
 
 # ======================================================
 # --- SIDEBAR FILTERS ---
@@ -82,19 +80,18 @@ if search_barcode:
 # Calculate KPIs using the filtered data
 total_sales = filtered_df["Total Sales"].sum()
 total_stock_value = filtered_df["Stock Value"].sum()
-# Calculate average margin, handle empty df
 avg_margin = filtered_df["Margin%"].mean() if not filtered_df.empty else 0
 
 # Main Title and KPIs
 st.title("📊 Retail Insights Dashboard")
 
-# Display the KPI cards right after the filtering is done
+# Display the KPI cards
 col1, col2, col3 = st.columns(3)
 col1.metric("💰 Total Sales", f"{total_sales:,.2f}")
 col2.metric("📦 Total Stock Value", f"{total_stock_value:,.2f}")
 col3.metric("📈 Average Margin%", f"{avg_margin:.2f}%")
 
-st.markdown("---") # Add a separator line after the KPIs
+st.markdown("---") # Separator line
 
 
 # ======================================================
@@ -106,7 +103,7 @@ page = st.sidebar.radio(
 )
 
 # ======================================================
-# --- DASHBOARD PAGE (KPIs Removed) ---
+# --- DASHBOARD PAGE (Line Chart & KPIs Removed) ---
 # ======================================================
 if page == "Dashboard":
     st.header("Sales and Stock Overview")
@@ -128,9 +125,9 @@ if page == "Dashboard":
             value_name="Sales"
         )
 
-        # === Monthly Total Sales Chart ===
+        # === Monthly Total Sales Chart (LINE CHART) ===
         monthly_sales = sales_melted.groupby("Month")["Sales"].sum().reset_index()
-        
+
         # Ensure 'Month' column is categorical with the correct order
         monthly_sales['Month'] = pd.Categorical(
             monthly_sales['Month'], 
@@ -138,20 +135,28 @@ if page == "Dashboard":
             ordered=True
         )
         monthly_sales = monthly_sales.sort_values('Month')
-        
-        fig1 = px.bar(
+
+        # Use px.line for a modern trend view
+        fig1 = px.line(
             monthly_sales,
             x="Month",
             y="Sales",
-            title="📈 Monthly Total Sales",
-            text_auto=".2s",
-            color="Sales"
+            title="📈 **Monthly Sales Trend**", 
+            markers=True,  
+            line_shape='spline', # Smooth the line
+            color_discrete_sequence=px.colors.qualitative.D3, 
         )
+        
+        # Add tooltips and formatting
+        fig1.update_traces(hovertemplate='Month: %{x}<br>Sales: %{y:$,.2f}<extra></extra>')
+        fig1.update_yaxes(title_text="Total Sales", tickformat='$,.0f')
+        fig1.update_layout(hovermode="x unified", title_x=0.5)
+
         st.plotly_chart(fig1, use_container_width=True)
     else:
         st.info("No monthly sales columns detected (e.g., 'Jan,Sales'). Monthly chart is skipped.")
 
-    # === Total Sales by Category ===
+    # === Total Sales by Category (Bar Chart) ===
     cat_sales = filtered_df.groupby("Category")["Total Sales"].sum().reset_index()
     fig2 = px.bar(
         cat_sales,
@@ -159,7 +164,8 @@ if page == "Dashboard":
         y="Total Sales",
         title="🏷️ Total Sales by Category",
         text_auto=".2s",
-        color="Category"
+        color="Category",
+        template="streamlit"
     )
     st.plotly_chart(fig2, use_container_width=True)
 
